@@ -13,12 +13,17 @@ module.exports = {
       { hostname: 'plex.tv' },
     ],
   },
-  webpack(config) {
+  webpack(config, { dev }) {
     config.module.rules.push({
       test: /\.svg$/,
       issuer: /\.(js|ts)x?$/,
       use: ['@svgr/webpack'],
     });
+
+    // Avoid persistent webpack cache stalls on the seedbox filesystem.
+    if (!dev && config.cache) {
+      config.cache = false;
+    }
 
     return config;
   },
