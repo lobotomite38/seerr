@@ -532,6 +532,8 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                   is4k={requestData.is4k}
                   tmdbId={requestData.media.tmdbId}
                   mediaType={requestData.type}
+                  releaseDate={isMovie(title) ? title.releaseDate : undefined}
+                  releases={isMovie(title) ? title.releases : undefined}
                   plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                   serviceUrl={
                     requestData.is4k

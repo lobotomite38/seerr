@@ -19,7 +19,30 @@ const messages = defineMessages('components.StatusBadge', {
   managemedia: 'Manage {mediaType}',
   seasonnumber: 'S{seasonNumber}',
   seasonepisodenumber: 'S{seasonNumber}E{episodeNumber}',
+  requestedInTheaters: 'Requested • Still in theaters',
+  requestedNotInTheaters: 'Requested • Not in theaters yet',
+  requestedNoReleaseFound: 'Requested • No release found yet',
+  compactRequestedInTheaters: 'Still in theaters',
+  compactRequestedNotInTheaters: 'Not in theaters yet',
+  compactRequestedNoReleaseFound: 'No release yet',
+  digitalReleaseTooltip: 'Digital release is {date}.',
+  physicalReleaseTooltip: 'Physical release is {date}.',
+  theatricalReleaseTooltip: 'The theatrical release is {date}.',
+  noReleaseFoundTooltip: 'No digital or physical release has been found yet.',
 });
+
+interface MovieReleaseInfo {
+  results: {
+    iso_3166_1: string;
+    release_dates: {
+      certification: string;
+      iso_639_1?: string;
+      note?: string;
+      release_date: string;
+      type: number;
+    }[];
+  }[];
+}
 
 interface StatusBadgeProps {
   status?: MediaStatus;
@@ -31,6 +54,9 @@ interface StatusBadgeProps {
   tmdbId?: number;
   mediaType?: 'movie' | 'tv';
   title?: string | string[];
+  releaseDate?: string;
+  releases?: MovieReleaseInfo;
+  compact?: boolean;
 }
 
 const StatusBadge = ({
@@ -43,6 +69,9 @@ const StatusBadge = ({
   tmdbId,
   mediaType,
   title,
+  releaseDate,
+  releases,
+  compact = false,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -105,6 +134,88 @@ const StatusBadge = ({
       });
     }
   }
+
+  const now = new Date();
+  const futureReleases =
+    mediaType === 'movie'
+      ? (releases?.results ?? [])
+          .flatMap((country) => country.release_dates)
+          .map((release) => ({
+            ...release,
+            parsedDate: new Date(release.release_date),
+          }))
+          .filter(
+            (release) =>
+              !Number.isNaN(release.parsedDate.getTime()) &&
+              release.parsedDate > now
+          )
+          .sort(
+            (left, right) =>
+              left.parsedDate.getTime() - right.parsedDate.getTime()
+          )
+      : [];
+
+  const nextDigitalRelease = futureReleases.find(
+    (release) => release.type === 4
+  );
+  const nextPhysicalRelease = futureReleases.find(
+    (release) => release.type === 5
+  );
+  const theatricalReleaseDate = releaseDate ? new Date(releaseDate) : undefined;
+  const hasFutureTheatricalRelease =
+    theatricalReleaseDate &&
+    !Number.isNaN(theatricalReleaseDate.getTime()) &&
+    theatricalReleaseDate > now;
+
+  const requestedLabel =
+    mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
+      ? nextDigitalRelease || nextPhysicalRelease
+        ? intl.formatMessage(
+            compact
+              ? messages.compactRequestedInTheaters
+              : messages.requestedInTheaters
+          )
+        : hasFutureTheatricalRelease
+          ? intl.formatMessage(
+              compact
+                ? messages.compactRequestedNotInTheaters
+                : messages.requestedNotInTheaters
+            )
+          : intl.formatMessage(
+              compact
+                ? messages.compactRequestedNoReleaseFound
+                : messages.requestedNoReleaseFound
+            )
+      : intl.formatMessage(globalMessages.requested);
+
+  const requestedTooltipContent =
+    mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
+      ? nextDigitalRelease
+        ? intl.formatMessage(messages.digitalReleaseTooltip, {
+            date: intl.formatDate(nextDigitalRelease.release_date, {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            }),
+          })
+        : nextPhysicalRelease
+          ? intl.formatMessage(messages.physicalReleaseTooltip, {
+              date: intl.formatDate(nextPhysicalRelease.release_date, {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              }),
+            })
+          : hasFutureTheatricalRelease
+            ? intl.formatMessage(messages.theatricalReleaseTooltip, {
+                date: intl.formatDate(releaseDate, {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                }),
+              })
+            : intl.formatMessage(messages.noReleaseFoundTooltip)
+      : mediaLinkDescription;
 
   const tooltipContent =
     mediaType === 'tv' &&
@@ -286,7 +397,7 @@ const StatusBadge = ({
     case MediaStatus.PROCESSING:
       return (
         <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
+          content={inProgress ? tooltipContent : requestedTooltipContent}
           className={`${
             inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
@@ -313,7 +424,7 @@ const StatusBadge = ({
                   {
                     status: inProgress
                       ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.requested),
+                      : requestedLabel,
                   }
                 )}
               </span>

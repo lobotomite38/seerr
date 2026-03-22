@@ -197,6 +197,28 @@ class AvailabilitySync {
             }
           }
 
+          if (movieExists && media.status === MediaStatus.PROCESSING) {
+            media.status = MediaStatus.AVAILABLE;
+            await getRepository(Media).save(media);
+            logger.info(
+              `The non-4K movie [TMDB ID ${media.tmdbId}] was found during availability sync and has been promoted from processing to available.`,
+              {
+                label: 'Availability Sync',
+              }
+            );
+          }
+
+          if (movieExists4k && media.status4k === MediaStatus.PROCESSING) {
+            media.status4k = MediaStatus.AVAILABLE;
+            await getRepository(Media).save(media);
+            logger.info(
+              `The 4K movie [TMDB ID ${media.tmdbId}] was found during availability sync and has been promoted from processing to available.`,
+              {
+                label: 'Availability Sync',
+              }
+            );
+          }
+
           if (!movieExists && media.status === MediaStatus.AVAILABLE) {
             await this.mediaUpdater(media, false, mediaServerType);
           }
@@ -421,8 +443,10 @@ class AvailabilitySync {
     const whereOptions = [
       { status: MediaStatus.AVAILABLE },
       { status: MediaStatus.PARTIALLY_AVAILABLE },
+      { status: MediaStatus.PROCESSING },
       { status4k: MediaStatus.AVAILABLE },
       { status4k: MediaStatus.PARTIALLY_AVAILABLE },
+      { status4k: MediaStatus.PROCESSING },
       { seasons: { status: MediaStatus.AVAILABLE } },
       { seasons: { status: MediaStatus.PARTIALLY_AVAILABLE } },
       { seasons: { status4k: MediaStatus.AVAILABLE } },

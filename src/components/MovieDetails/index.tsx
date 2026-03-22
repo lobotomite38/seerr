@@ -100,6 +100,10 @@ const messages = defineMessages('components.MovieDetails', {
   rtaudiencescore: 'Rotten Tomatoes Audience Score',
   tmdbuserscore: 'TMDB User Score',
   imdbuserscore: 'IMDB User Score – votes: {formattedCount}',
+  digitalReleaseStatus: 'Digital release: {date}',
+  physicalReleaseStatus: 'Physical release: {date}',
+  theatricalReleaseStatus: 'Theatrical release: {date}',
+  noReleaseFoundStatus: 'No digital or physical release has been found yet.',
   watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
   watchlistDeleted:
     '<strong>{title}</strong> Removed from watchlist successfully!',
@@ -152,6 +156,80 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     `/api/v1/movie/${router.query.movieId}/ratingscombined`
   );
 
+  const getReleaseHoldMessage = useCallback(() => {
+    if (
+      !data?.mediaInfo ||
+      data.mediaInfo.status !== MediaStatus.PROCESSING ||
+      (data.mediaInfo.downloadStatus ?? []).length > 0
+    ) {
+      return null;
+    }
+
+    const now = new Date();
+    const futureReleases = (data.releases?.results ?? [])
+      .flatMap((country) => country.release_dates)
+      .map((release) => ({
+        ...release,
+        parsedDate: new Date(release.release_date),
+      }))
+      .filter(
+        (release) =>
+          !Number.isNaN(release.parsedDate.getTime()) &&
+          release.parsedDate > now
+      )
+      .sort(
+        (left, right) => left.parsedDate.getTime() - right.parsedDate.getTime()
+      );
+
+    const nextDigitalRelease = futureReleases.find(
+      (release) => release.type === 4
+    );
+
+    if (nextDigitalRelease) {
+      return intl.formatMessage(messages.digitalReleaseStatus, {
+        date: intl.formatDate(nextDigitalRelease.release_date, {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }),
+      });
+    }
+
+    const nextPhysicalRelease = futureReleases.find(
+      (release) => release.type === 5
+    );
+
+    if (nextPhysicalRelease) {
+      return intl.formatMessage(messages.physicalReleaseStatus, {
+        date: intl.formatDate(nextPhysicalRelease.release_date, {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }),
+      });
+    }
+
+    const theatricalReleaseDate = data.releaseDate
+      ? new Date(data.releaseDate)
+      : undefined;
+
+    if (
+      theatricalReleaseDate &&
+      !Number.isNaN(theatricalReleaseDate.getTime()) &&
+      theatricalReleaseDate > now
+    ) {
+      return intl.formatMessage(messages.theatricalReleaseStatus, {
+        date: intl.formatDate(data.releaseDate, {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }),
+      });
+    }
+
+    return intl.formatMessage(messages.noReleaseFoundStatus);
+  }, [data, intl]);
+
   const sortedCrew = useMemo(
     () => sortCrewPriority(data?.credits.crew ?? []),
     [data]
@@ -181,6 +259,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     return <ErrorPage statusCode={404} />;
   }
 
+  const releaseHoldMessage = getReleaseHoldMessage();
   const showAllStudios = data.productionCompanies.length <= minStudios + 1;
   const mediaLinks: PlayButtonLink[] = [];
 
@@ -509,6 +588,8 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
               downloadItem={data.mediaInfo?.downloadStatus}
               title={data.title}
               inProgress={(data.mediaInfo?.downloadStatus ?? []).length > 0}
+              releaseDate={data.releaseDate}
+              releases={data.releases}
               tmdbId={data.mediaInfo?.tmdbId}
               mediaType="movie"
               plexUrl={plexUrl}
@@ -533,6 +614,8 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                   inProgress={
                     (data.mediaInfo?.downloadStatus4k ?? []).length > 0
                   }
+                  releaseDate={data.releaseDate}
+                  releases={data.releases}
                   tmdbId={data.mediaInfo?.tmdbId}
                   mediaType="movie"
                   plexUrl={plexUrl4k}
@@ -540,6 +623,11 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                 />
               )}
           </div>
+          {releaseHoldMessage && (
+            <div className="mt-2 text-sm text-gray-300">
+              {releaseHoldMessage}
+            </div>
+          )}
           <h1 data-testid="media-title">
             {data.title}{' '}
             {data.releaseDate && (

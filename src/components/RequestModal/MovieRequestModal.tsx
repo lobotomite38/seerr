@@ -35,6 +35,13 @@ const messages = defineMessages('components.RequestModal', {
   requestApproved: 'Request for <strong>{title}</strong> approved!',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
+  confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
+  confirmOppositeResolutionMessage:
+    'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  requestAnyway: 'Request Anyway',
+  imSure: "I'm Sure",
+  standardResolution: '1080p',
+  fourKResolution: '4K',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -55,6 +62,13 @@ const MovieRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [hideRequestModal, setHideRequestModal] = useState(false);
+  const [showOppositeResolutionWarning, setShowOppositeResolutionWarning] =
+    useState(false);
+  const [
+    confirmOppositeResolutionRequest,
+    setConfirmOppositeResolutionRequest,
+  ] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const { addToast } = useToasts();
@@ -75,6 +89,17 @@ const MovieRequestModal = ({
       onUpdating(isUpdating);
     }
   }, [isUpdating, onUpdating]);
+
+  const getResolutionLabel = useCallback(
+    (use4k: boolean) =>
+      intl.formatMessage(
+        use4k ? messages.fourKResolution : messages.standardResolution
+      ),
+    [intl]
+  );
+
+  const hasOppositeResolutionAvailable =
+    data?.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
 
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
@@ -125,6 +150,7 @@ const MovieRequestModal = ({
         );
       }
     } catch {
+      setHideRequestModal(false);
       addToast(intl.formatMessage(messages.requesterror), {
         appearance: 'error',
         autoDismiss: true,
@@ -141,6 +167,22 @@ const MovieRequestModal = ({
     addToast,
     intl,
     hasPermission,
+  ]);
+
+  const handleRequest = useCallback(() => {
+    if (hasOppositeResolutionAvailable && !showOppositeResolutionWarning) {
+      setShowOppositeResolutionWarning(true);
+      setConfirmOppositeResolutionRequest(false);
+      return;
+    }
+
+    setShowOppositeResolutionWarning(false);
+    setConfirmOppositeResolutionRequest(false);
+    void sendRequest();
+  }, [
+    hasOppositeResolutionAvailable,
+    sendRequest,
+    showOppositeResolutionWarning,
   ]);
 
   const cancelRequest = async () => {
@@ -315,56 +357,99 @@ const MovieRequestModal = ({
   );
 
   return (
-    <Modal
-      loading={(!data && !error) || !quota}
-      backgroundClickable
-      onCancel={onCancel}
-      onOk={sendRequest}
-      okDisabled={isUpdating || quota?.movie.restricted}
-      title={intl.formatMessage(
-        is4k ? messages.requestmovie4ktitle : messages.requestmovietitle
-      )}
-      subTitle={data?.title}
-      okText={
-        isUpdating
-          ? intl.formatMessage(globalMessages.requesting)
-          : intl.formatMessage(
-              is4k ? globalMessages.request4k : globalMessages.request
-            )
-      }
-      okButtonType={'primary'}
-      backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
-    >
-      {hasAutoApprove && !quota?.movie.restricted && (
-        <div className="mt-6">
-          <Alert
-            title={intl.formatMessage(messages.requestadmin)}
-            type="info"
-          />
-        </div>
-      )}
-      {(quota?.movie.limit ?? 0) > 0 && (
-        <QuotaDisplay
-          mediaType="movie"
-          quota={quota?.movie}
-          userOverride={
-            requestOverrides?.user && requestOverrides.user.id !== user?.id
-              ? requestOverrides?.user?.id
-              : undefined
+    <>
+      {!showOppositeResolutionWarning && !hideRequestModal && (
+        <Modal
+          loading={(!data && !error) || !quota}
+          backgroundClickable
+          onCancel={onCancel}
+          onOk={handleRequest}
+          okDisabled={isUpdating || quota?.movie.restricted}
+          title={intl.formatMessage(
+            is4k ? messages.requestmovie4ktitle : messages.requestmovietitle
+          )}
+          subTitle={data?.title}
+          okText={
+            isUpdating
+              ? intl.formatMessage(globalMessages.requesting)
+              : intl.formatMessage(
+                  is4k ? globalMessages.request4k : globalMessages.request
+                )
           }
-        />
+          okButtonType="primary"
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
+          {hasAutoApprove && !quota?.movie.restricted && (
+            <div className="mt-6">
+              <Alert
+                title={intl.formatMessage(messages.requestadmin)}
+                type="info"
+              />
+            </div>
+          )}
+          {(quota?.movie.limit ?? 0) > 0 && (
+            <QuotaDisplay
+              mediaType="movie"
+              quota={quota?.movie}
+              userOverride={
+                requestOverrides?.user && requestOverrides.user.id !== user?.id
+                  ? requestOverrides?.user?.id
+                  : undefined
+              }
+            />
+          )}
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="movie"
+              is4k={is4k}
+              onChange={(overrides) => {
+                setRequestOverrides(overrides);
+              }}
+            />
+          )}
+        </Modal>
       )}
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="movie"
-          is4k={is4k}
-          onChange={(overrides) => {
-            setRequestOverrides(overrides);
+      {showOppositeResolutionWarning && (
+        <Modal
+          backgroundClickable
+          onCancel={() => {
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
           }}
-        />
+          onOk={() => {
+            if (!confirmOppositeResolutionRequest) {
+              setConfirmOppositeResolutionRequest(true);
+              return;
+            }
+
+            setHideRequestModal(true);
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+            void sendRequest();
+          }}
+          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+            existingResolution: getResolutionLabel(!is4k),
+          })}
+          subTitle={data?.title}
+          okText={
+            confirmOppositeResolutionRequest
+              ? intl.formatMessage(messages.imSure)
+              : intl.formatMessage(messages.requestAnyway)
+          }
+          okButtonType="danger"
+          cancelText={intl.formatMessage(globalMessages.cancel)}
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
+          <p className="text-sm text-gray-300">
+            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
+              existingResolution: getResolutionLabel(!is4k),
+              requestedResolution: getResolutionLabel(is4k),
+            })}
+          </p>
+        </Modal>
       )}
-    </Modal>
+    </>
   );
 };
 

@@ -461,6 +461,9 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                 is4k={requestData.is4k}
                 tmdbId={requestData.media.tmdbId}
                 mediaType={requestData.type}
+                releaseDate={isMovie(title) ? title.releaseDate : undefined}
+                releases={isMovie(title) ? title.releases : undefined}
+                compact
                 plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                 serviceUrl={
                   requestData.is4k

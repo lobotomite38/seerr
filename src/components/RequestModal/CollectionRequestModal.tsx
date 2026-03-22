@@ -29,6 +29,13 @@ const messages = defineMessages('components.RequestModal', {
   requestmovies: 'Request {count} {count, plural, one {Movie} other {Movies}}',
   requestmovies4k:
     'Request {count} {count, plural, one {Movie} other {Movies}} in 4K',
+  confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
+  confirmOppositeResolutionMessage:
+    '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  requestAnyway: 'Request Anyway',
+  imSure: "I'm Sure",
+  standardResolution: '1080p',
+  fourKResolution: '4K',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -47,9 +54,16 @@ const CollectionRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [hideRequestModal, setHideRequestModal] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
+  const [showOppositeResolutionWarning, setShowOppositeResolutionWarning] =
+    useState(false);
+  const [
+    confirmOppositeResolutionRequest,
+    setConfirmOppositeResolutionRequest,
+  ] = useState(false);
   const { addToast } = useToasts();
   const { data, error } = useSWR<Collection>(`/api/v1/collection/${tmdbId}`, {
     revalidateOnMount: true,
@@ -65,6 +79,14 @@ const CollectionRequestModal = ({
 
   const currentlyRemaining =
     (quota?.movie.remaining ?? 0) - selectedParts.length;
+
+  const getResolutionLabel = useCallback(
+    (use4k: boolean) =>
+      intl.formatMessage(
+        use4k ? messages.fourKResolution : messages.standardResolution
+      ),
+    [intl]
+  );
 
   const getAllParts = (): number[] => {
     return (data?.parts ?? [])
@@ -183,6 +205,17 @@ const CollectionRequestModal = ({
     }
   }, [isUpdating, onUpdating]);
 
+  const oppositeResolutionAvailableParts = (data?.parts ?? []).filter(
+    (part) =>
+      selectedParts.includes(part.id) &&
+      part.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE
+  );
+
+  const formatPartTitles = useCallback(
+    (parts: Collection['parts']) => parts.map((part) => part.title).join(', '),
+    []
+  );
+
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
 
@@ -230,6 +263,7 @@ const CollectionRequestModal = ({
         { appearance: 'success', autoDismiss: true }
       );
     } catch {
+      setHideRequestModal(false);
       addToast(intl.formatMessage(messages.requesterror), {
         appearance: 'error',
         autoDismiss: true,
@@ -248,6 +282,25 @@ const CollectionRequestModal = ({
     is4k,
   ]);
 
+  const handleRequest = useCallback(() => {
+    if (
+      oppositeResolutionAvailableParts.length > 0 &&
+      !showOppositeResolutionWarning
+    ) {
+      setShowOppositeResolutionWarning(true);
+      setConfirmOppositeResolutionRequest(false);
+      return;
+    }
+
+    setShowOppositeResolutionWarning(false);
+    setConfirmOppositeResolutionRequest(false);
+    void sendRequest();
+  }, [
+    oppositeResolutionAvailableParts.length,
+    sendRequest,
+    showOppositeResolutionWarning,
+  ]);
+
   const hasAutoApprove = hasPermission(
     [
       Permission.MANAGE_REQUESTS,
@@ -263,33 +316,35 @@ const CollectionRequestModal = ({
   );
 
   return (
-    <Modal
-      loading={(!data && !error) || !quota}
-      backgroundClickable
-      onCancel={onCancel}
-      onOk={sendRequest}
-      title={intl.formatMessage(
-        is4k
-          ? messages.requestcollection4ktitle
-          : messages.requestcollectiontitle
-      )}
-      subTitle={data?.name}
-      okText={
-        isUpdating
-          ? intl.formatMessage(globalMessages.requesting)
-          : selectedParts.length === 0
-            ? intl.formatMessage(messages.selectmovies)
-            : intl.formatMessage(
-                is4k ? messages.requestmovies4k : messages.requestmovies,
-                {
-                  count: selectedParts.length,
-                }
-              )
-      }
-      okDisabled={selectedParts.length === 0}
-      okButtonType={'primary'}
-      backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
-    >
+    <>
+      {!showOppositeResolutionWarning && !hideRequestModal && (
+        <Modal
+          loading={(!data && !error) || !quota}
+          backgroundClickable
+          onCancel={onCancel}
+          onOk={handleRequest}
+          title={intl.formatMessage(
+            is4k
+              ? messages.requestcollection4ktitle
+              : messages.requestcollectiontitle
+          )}
+          subTitle={data?.name}
+          okText={
+            isUpdating
+              ? intl.formatMessage(globalMessages.requesting)
+              : selectedParts.length === 0
+                ? intl.formatMessage(messages.selectmovies)
+                : intl.formatMessage(
+                    is4k ? messages.requestmovies4k : messages.requestmovies,
+                    {
+                      count: selectedParts.length,
+                    }
+                  )
+          }
+          okDisabled={selectedParts.length === 0}
+          okButtonType="primary"
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
       {hasAutoApprove && !quota?.movie.restricted && (
         <div className="mt-6">
           <Alert
@@ -517,17 +572,60 @@ const CollectionRequestModal = ({
           </div>
         </div>
       </div>
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="movie"
-          is4k={is4k}
-          onChange={(overrides) => {
-            setRequestOverrides(overrides);
-          }}
-        />
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="movie"
+              is4k={is4k}
+              onChange={(overrides) => {
+                setRequestOverrides(overrides);
+              }}
+            />
+          )}
+        </Modal>
       )}
-    </Modal>
+      {showOppositeResolutionWarning && (
+        <Modal
+          backgroundClickable
+          onCancel={() => {
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+          }}
+          onOk={() => {
+            if (!confirmOppositeResolutionRequest) {
+              setConfirmOppositeResolutionRequest(true);
+              return;
+            }
+
+            setHideRequestModal(true);
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+            void sendRequest();
+          }}
+          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+            existingResolution: getResolutionLabel(!is4k),
+          })}
+          subTitle={data?.name}
+          okText={
+            confirmOppositeResolutionRequest
+              ? intl.formatMessage(messages.imSure)
+              : intl.formatMessage(messages.requestAnyway)
+          }
+          okButtonType="danger"
+          cancelText={intl.formatMessage(globalMessages.cancel)}
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
+          <p className="text-sm text-gray-300">
+            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
+              count: oppositeResolutionAvailableParts.length,
+              titles: formatPartTitles(oppositeResolutionAvailableParts),
+              existingResolution: getResolutionLabel(!is4k),
+              requestedResolution: getResolutionLabel(is4k),
+            })}
+          </p>
+        </Modal>
+      )}
+    </>
   );
 };
 

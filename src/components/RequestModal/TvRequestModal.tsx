@@ -18,7 +18,7 @@ import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import { useToasts } from 'react-toast-notifications';
 import useSWR, { mutate } from 'swr';
@@ -50,6 +50,17 @@ const messages = defineMessages('components.RequestModal', {
   autoapproval: 'Automatic Approval',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
+  selectfewerseasons: 'Select fewer than all seasons.',
+  singleSeasonOnlyTitle: 'One Season at a Time',
+  singleSeasonOnlyMessage:
+    'Please request one season at a time, downloads are deleted after 90 days.',
+  confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
+  confirmOppositeResolutionMessage:
+    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  requestAnyway: 'Request Anyway',
+  imSure: "I'm Sure",
+  standardResolution: '1080p',
+  fourKResolution: '4K',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -80,6 +91,14 @@ const TvRequestModal = ({
   const [selectedSeasons, setSelectedSeasons] = useState<number[]>(
     editRequest ? editingSeasons : []
   );
+  const [hideRequestModal, setHideRequestModal] = useState(false);
+  const [showSingleSeasonWarning, setShowSingleSeasonWarning] = useState(false);
+  const [showOppositeResolutionWarning, setShowOppositeResolutionWarning] =
+    useState(false);
+  const [
+    confirmOppositeResolutionRequest,
+    setConfirmOppositeResolutionRequest,
+  ] = useState(false);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -99,6 +118,14 @@ const TvRequestModal = ({
     (quota?.tv.remaining ?? 0) -
     selectedSeasons.length +
     (editRequest?.seasons ?? []).length;
+
+  const getResolutionLabel = useCallback(
+    (use4k: boolean) =>
+      intl.formatMessage(
+        use4k ? messages.fourKResolution : messages.standardResolution
+      ),
+    [intl]
+  );
 
   const updateRequest = async (alsoApproveRequest = false) => {
     if (!editRequest) {
@@ -169,73 +196,7 @@ const TvRequestModal = ({
     }
   };
 
-  const sendRequest = async () => {
-    if (
-      settings.currentSettings.partialRequestsEnabled &&
-      selectedSeasons.length === 0
-    ) {
-      return;
-    }
-
-    if (onUpdating) {
-      onUpdating(true);
-      mutate('/api/v1/request/count');
-    }
-
-    try {
-      let overrideParams = {};
-      if (requestOverrides) {
-        overrideParams = {
-          serverId: requestOverrides.server,
-          profileId: requestOverrides.profile,
-          rootFolder: requestOverrides.folder,
-          languageProfileId: requestOverrides.language,
-          userId: requestOverrides?.user?.id,
-          tags: requestOverrides.tags,
-        };
-      }
-      const response = await axios.post<MediaRequest>('/api/v1/request', {
-        mediaId: data?.id,
-        tvdbId: tvdbId ?? data?.externalIds.tvdbId,
-        mediaType: 'tv',
-        is4k,
-        seasons: settings.currentSettings.partialRequestsEnabled
-          ? selectedSeasons.sort((a, b) => a - b)
-          : getAllSeasons().filter(
-              (season) =>
-                !getAllRequestedSeasons().includes(season) && season !== 0
-            ),
-        ...overrideParams,
-      });
-      mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
-
-      if (response.data) {
-        if (onComplete) {
-          onComplete(response.data.media.status);
-        }
-        addToast(
-          <span>
-            {intl.formatMessage(messages.requestSuccess, {
-              title: data?.name,
-              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-            })}
-          </span>,
-          { appearance: 'success', autoDismiss: true }
-        );
-      }
-    } catch {
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-    } finally {
-      if (onUpdating) {
-        onUpdating(false);
-      }
-    }
-  };
-
-  const getAllSeasons = (): number[] => {
+  const getAllSeasons = useCallback((): number[] => {
     let allSeasons = (data?.seasons ?? []).filter(
       (season) => season.episodeCount !== 0
     );
@@ -243,9 +204,9 @@ const TvRequestModal = ({
       allSeasons = allSeasons.filter((season) => season.seasonNumber > 0);
     }
     return allSeasons.map((season) => season.seasonNumber);
-  };
+  }, [data?.seasons, settings.currentSettings.enableSpecialEpisodes]);
 
-  const getAllRequestedSeasons = (): number[] => {
+  const getAllRequestedSeasons = useCallback((): number[] => {
     const requestedSeasons = (data?.mediaInfo?.requests ?? [])
       .filter(
         (request) =>
@@ -274,10 +235,179 @@ const TvRequestModal = ({
       .map((season) => season.seasonNumber);
 
     return [...requestedSeasons, ...availableSeasons];
-  };
+  }, [
+    data?.mediaInfo?.requests,
+    data?.mediaInfo?.seasons,
+    editingSeasons,
+    is4k,
+  ]);
 
   const isSelectedSeason = (seasonNumber: number): boolean =>
     selectedSeasons.includes(seasonNumber);
+
+  const seasonsToRequest = useMemo(
+    () =>
+      settings.currentSettings.partialRequestsEnabled
+        ? selectedSeasons.sort((a, b) => a - b)
+        : getAllSeasons().filter(
+            (season) =>
+              !getAllRequestedSeasons().includes(season) && season !== 0
+          ),
+    [
+      settings.currentSettings.partialRequestsEnabled,
+      selectedSeasons,
+      getAllSeasons,
+      getAllRequestedSeasons,
+    ]
+  );
+
+  const oppositeResolutionAvailableSeasons = useMemo(
+    () =>
+      seasonsToRequest.filter((seasonNumber) => {
+        const season = data?.mediaInfo?.seasons?.find(
+          (mediaSeason) => mediaSeason.seasonNumber === seasonNumber
+        );
+
+        return season?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
+      }),
+    [data?.mediaInfo?.seasons, is4k, seasonsToRequest]
+  );
+
+  const formatSeasonList = useCallback(
+    (seasonNumbers: number[]) =>
+      seasonNumbers
+        .map((seasonNumber) =>
+          intl.formatMessage(messages.seasonnumber, {
+            number: seasonNumber,
+          })
+        )
+        .join(', '),
+    [intl]
+  );
+
+  const sendRequest = useCallback(async () => {
+    const requestingWholeSeries =
+      settings.currentSettings.partialRequestsEnabled &&
+      getAllSeasons()
+        .filter(
+          (seasonNumber) =>
+            !getAllRequestedSeasons().includes(seasonNumber) &&
+            seasonNumber !== 0
+        )
+        .every((seasonNumber) => selectedSeasons.includes(seasonNumber)) &&
+      getAllSeasons().filter(
+        (seasonNumber) =>
+          !getAllRequestedSeasons().includes(seasonNumber) && seasonNumber !== 0
+      ).length > 1;
+
+    if (
+      settings.currentSettings.partialRequestsEnabled &&
+      selectedSeasons.length === 0
+    ) {
+      return;
+    }
+
+    if (selectedSeasons.length > 1) {
+      setShowSingleSeasonWarning(true);
+      return;
+    }
+
+    if (requestingWholeSeries) {
+      addToast(intl.formatMessage(messages.selectfewerseasons), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+      return;
+    }
+
+    if (onUpdating) {
+      onUpdating(true);
+      mutate('/api/v1/request/count');
+    }
+
+    try {
+      let overrideParams = {};
+      if (requestOverrides) {
+        overrideParams = {
+          serverId: requestOverrides.server,
+          profileId: requestOverrides.profile,
+          rootFolder: requestOverrides.folder,
+          languageProfileId: requestOverrides.language,
+          userId: requestOverrides?.user?.id,
+          tags: requestOverrides.tags,
+        };
+      }
+      const response = await axios.post<MediaRequest>('/api/v1/request', {
+        mediaId: data?.id,
+        tvdbId: tvdbId ?? data?.externalIds.tvdbId,
+        mediaType: 'tv',
+        is4k,
+        seasons: seasonsToRequest,
+        ...overrideParams,
+      });
+      mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
+
+      if (response.data) {
+        if (onComplete) {
+          onComplete(response.data.media.status);
+        }
+        addToast(
+          <span>
+            {intl.formatMessage(messages.requestSuccess, {
+              title: data?.name,
+              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            })}
+          </span>,
+          { appearance: 'success', autoDismiss: true }
+        );
+      }
+    } catch {
+      setHideRequestModal(false);
+      addToast(intl.formatMessage(messages.requesterror), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+    } finally {
+      if (onUpdating) {
+        onUpdating(false);
+      }
+    }
+  }, [
+    settings.currentSettings.partialRequestsEnabled,
+    selectedSeasons,
+    onUpdating,
+    requestOverrides,
+    data?.id,
+    data?.externalIds.tvdbId,
+    data?.name,
+    tvdbId,
+    is4k,
+    seasonsToRequest,
+    onComplete,
+    addToast,
+    intl,
+    getAllSeasons,
+    getAllRequestedSeasons,
+  ]);
+
+  const handleRequest = useCallback(() => {
+    if (
+      oppositeResolutionAvailableSeasons.length > 0 &&
+      !showOppositeResolutionWarning
+    ) {
+      setShowOppositeResolutionWarning(true);
+      setConfirmOppositeResolutionRequest(false);
+      return;
+    }
+
+    setShowOppositeResolutionWarning(false);
+    setConfirmOppositeResolutionRequest(false);
+    void sendRequest();
+  }, [
+    oppositeResolutionAvailableSeasons.length,
+    sendRequest,
+    showOppositeResolutionWarning,
+  ]);
 
   const toggleSeason = (seasonNumber: number): void => {
     // If this season already has a pending request, don't allow it to be toggled
@@ -299,6 +429,11 @@ const TvRequestModal = ({
         seasons.filter((sn) => sn !== seasonNumber)
       );
     } else {
+      if (selectedSeasons.length >= 1) {
+        setShowSingleSeasonWarning(true);
+        return;
+      }
+
       setSelectedSeasons((seasons) => [...seasons, seasonNumber]);
     }
   };
@@ -308,42 +443,15 @@ const TvRequestModal = ({
       ? !getAllRequestedSeasons().includes(season) && season !== 0
       : !getAllRequestedSeasons().includes(season)
   );
-
-  const toggleAllSeasons = (): void => {
-    // If the user has a quota and not enough requests for all seasons, block toggleAllSeasons
-    if (
-      quota?.tv.limit &&
-      (quota?.tv.remaining ?? 0) < unrequestedSeasons.length
-    ) {
-      return;
-    }
-
-    const standardUnrequestedSeasons = unrequestedSeasons.filter(
-      (seasonNumber) => seasonNumber !== 0
+  const requestableStandardSeasons = unrequestedSeasons.filter(
+    (seasonNumber) => seasonNumber !== 0
+  );
+  const isRequestingWholeSeries =
+    settings.currentSettings.partialRequestsEnabled &&
+    requestableStandardSeasons.length > 1 &&
+    requestableStandardSeasons.every((seasonNumber) =>
+      selectedSeasons.includes(seasonNumber)
     );
-
-    if (
-      data &&
-      selectedSeasons.length >= 0 &&
-      selectedSeasons.length < standardUnrequestedSeasons.length
-    ) {
-      setSelectedSeasons(standardUnrequestedSeasons);
-    } else {
-      setSelectedSeasons([]);
-    }
-  };
-
-  const isAllSeasons = (): boolean => {
-    if (!data) {
-      return false;
-    }
-    return (
-      selectedSeasons.filter((season) => season !== 0).length ===
-      getAllSeasons().filter(
-        (season) => !getAllRequestedSeasons().includes(season) && season !== 0
-      ).length
-    );
-  };
 
   const getSeasonRequest = (
     seasonNumber: number
@@ -396,7 +504,11 @@ const TvRequestModal = ({
       backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
     />
   ) : (
-    <Modal
+    <>
+      {!showOppositeResolutionWarning &&
+        !showSingleSeasonWarning &&
+        !hideRequestModal && (
+          <Modal
       loading={!data && !error}
       backgroundClickable
       onCancel={tvdbId ? () => setSearchModal({ show: true }) : onCancel}
@@ -405,7 +517,7 @@ const TvRequestModal = ({
           ? hasPermission(Permission.MANAGE_REQUESTS)
             ? updateRequest(true)
             : updateRequest()
-          : sendRequest()
+          : handleRequest()
       }
       title={intl.formatMessage(
         editRequest
@@ -426,10 +538,12 @@ const TvRequestModal = ({
               : intl.formatMessage(messages.edit)
           : getAllRequestedSeasons().length >= getAllSeasons().length
             ? intl.formatMessage(messages.alreadyrequested)
-            : !settings.currentSettings.partialRequestsEnabled
+          : !settings.currentSettings.partialRequestsEnabled
               ? intl.formatMessage(
                   is4k ? globalMessages.request4k : globalMessages.request
                 )
+              : isRequestingWholeSeries
+                ? intl.formatMessage(messages.selectfewerseasons)
               : selectedSeasons.length === 0
                 ? intl.formatMessage(messages.selectseason)
                 : intl.formatMessage(
@@ -447,6 +561,7 @@ const TvRequestModal = ({
               unrequestedSeasons.length > quota.tv.limit
             ? true
             : getAllRequestedSeasons().length >= getAllSeasons().length ||
+              isRequestingWholeSeries ||
               (settings.currentSettings.partialRequestsEnabled &&
                 selectedSeasons.length === 0)
       }
@@ -533,39 +648,7 @@ const TvRequestModal = ({
                         !settings.currentSettings.partialRequestsEnabled &&
                         'hidden'
                       }`}
-                    >
-                      <span
-                        role="checkbox"
-                        tabIndex={0}
-                        aria-checked={isAllSeasons()}
-                        onClick={() => toggleAllSeasons()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === 'Space') {
-                            toggleAllSeasons();
-                          }
-                        }}
-                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                          quota?.tv.remaining &&
-                          quota.tv.limit &&
-                          quota.tv.remaining < unrequestedSeasons.length
-                            ? 'opacity-50'
-                            : ''
-                        }`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllSeasons() ? 'bg-indigo-500' : 'bg-gray-800'
-                          } absolute mx-auto h-4 w-9 rounded-full transition-colors duration-200 ease-in-out`}
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllSeasons() ? 'translate-x-5' : 'translate-x-0'
-                          } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
-                        />
-                      </span>
-                    </th>
+                    />
                     <th className="bg-gray-700/80 px-1 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
                       {intl.formatMessage(messages.season)}
                     </th>
@@ -745,8 +828,67 @@ const TvRequestModal = ({
               : undefined
           }
         />
+          )}
+          </Modal>
+        )}
+      {showSingleSeasonWarning && (
+        <Modal
+          backgroundClickable
+          onCancel={() => setShowSingleSeasonWarning(false)}
+          onOk={() => setShowSingleSeasonWarning(false)}
+          title={intl.formatMessage(messages.singleSeasonOnlyTitle)}
+          subTitle={data?.name}
+          okText={intl.formatMessage(globalMessages.close)}
+          cancelText={undefined}
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
+          <p className="text-sm text-gray-300">
+            {intl.formatMessage(messages.singleSeasonOnlyMessage)}
+          </p>
+        </Modal>
       )}
-    </Modal>
+      {showOppositeResolutionWarning && (
+        <Modal
+          backgroundClickable
+          onCancel={() => {
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+          }}
+          onOk={() => {
+            if (!confirmOppositeResolutionRequest) {
+              setConfirmOppositeResolutionRequest(true);
+              return;
+            }
+
+            setHideRequestModal(true);
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+            void sendRequest();
+          }}
+          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+            existingResolution: getResolutionLabel(!is4k),
+          })}
+          subTitle={data?.name}
+          okText={
+            confirmOppositeResolutionRequest
+              ? intl.formatMessage(messages.imSure)
+              : intl.formatMessage(messages.requestAnyway)
+          }
+          okButtonType="danger"
+          cancelText={intl.formatMessage(globalMessages.cancel)}
+          backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        >
+          <p className="text-sm text-gray-300">
+            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
+              seasonCount: oppositeResolutionAvailableSeasons.length,
+              seasonList: formatSeasonList(oppositeResolutionAvailableSeasons),
+              existingResolution: getResolutionLabel(!is4k),
+              requestedResolution: getResolutionLabel(is4k),
+            })}
+          </p>
+        </Modal>
+      )}
+    </>
   );
 };
 
