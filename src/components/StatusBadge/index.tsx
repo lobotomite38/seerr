@@ -57,6 +57,7 @@ interface StatusBadgeProps {
   releaseDate?: string;
   releases?: MovieReleaseInfo;
   compact?: boolean;
+  statusLabelOverride?: string;
 }
 
 const StatusBadge = ({
@@ -72,6 +73,7 @@ const StatusBadge = ({
   releaseDate,
   releases,
   compact = false,
+  statusLabelOverride,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -475,7 +477,9 @@ const StatusBadge = ({
         <Tooltip content={mediaLinkDescription}>
           <Badge badgeType="danger" href={mediaLink}>
             {intl.formatMessage(is4k ? messages.status4k : messages.status, {
-              status: intl.formatMessage(globalMessages.blocklisted),
+              status:
+                statusLabelOverride ??
+                intl.formatMessage(globalMessages.blocklisted),
             })}
           </Badge>
         </Tooltip>
