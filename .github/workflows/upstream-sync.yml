@@ -1,0 +1,110 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Sync from upstream (develop)
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      pushover_test:
+        description: 'Send a Pushover test notification (no sync).'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: seerr-team/seerr
+  UPSTREAM_BRANCH: develop
+  FORK_BRANCH: develop
+  CUSTOM_BRANCH: lobotomite-seerr
+  BOT_NAME: github-actions[bot]
+  BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+jobs:
+  sync:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pushover_test != 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+
+      - name: Set git identity
+        shell: bash
+        run: |
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+
+      - name: Add upstream remote
+        shell: bash
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" || true
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}" --prune
+          git fetch --no-tags origin "${FORK_BRANCH}" "${CUSTOM_BRANCH}" --prune
+
+      - name: Fast-forward fork develop from upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
+          git merge --ff-only "upstream/${UPSTREAM_BRANCH}"
+          git push origin "${FORK_BRANCH}"
+
+      - name: Merge refreshed develop into custom branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${CUSTOM_BRANCH}" --prune
+          git checkout -B "${CUSTOM_BRANCH}" "origin/${CUSTOM_BRANCH}"
+          git merge --no-edit "${FORK_BRANCH}"
+          git push origin "${CUSTOM_BRANCH}"
+
+      - name: Notify Pushover on failure
+        if: failure()
+        env:
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$PUSHOVER_USER_KEY" ] || [ -z "$PUSHOVER_APP_TOKEN" ]; then
+            echo "Pushover secrets not set; skipping notification."
+            exit 0
+          fi
+
+          curl -s \
+            --form-string "token=$PUSHOVER_APP_TOKEN" \
+            --form-string "user=$PUSHOVER_USER_KEY" \
+            --form-string "title=Seerr sync failed" \
+            --form-string "message=Upstream sync failed for $GITHUB_REPOSITORY. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            https://api.pushover.net/1/messages.json
+
+  pushover-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.pushover_test == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Send Pushover test notification
+        env:
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$PUSHOVER_USER_KEY" ] || [ -z "$PUSHOVER_APP_TOKEN" ]; then
+            echo "Pushover secrets not set; cannot send test."
+            exit 1
+          fi
+
+          curl -s \
+            --form-string "token=$PUSHOVER_APP_TOKEN" \
+            --form-string "user=$PUSHOVER_USER_KEY" \
+            --form-string "title=Seerr sync test" \
+            --form-string "message=This is a test Pushover notification for $GITHUB_REPOSITORY." \
+            https://api.pushover.net/1/messages.json
