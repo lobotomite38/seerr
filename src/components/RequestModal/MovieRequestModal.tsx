@@ -6,12 +6,13 @@ import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { MediaStatus } from '@server/constants/media';
+import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { MovieDetails } from '@server/models/Movie';
+import type { AxiosError } from 'axios';
 import axios from 'axios';
 import { useCallback, useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -38,6 +39,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  pendingOppositeResolutionTitle: 'Already Requested in {existingResolution}',
+  pendingOppositeResolutionMessage:
+    'This title was already requested in {existingResolution}, but it has not been found yet. Do you also want to request it in {requestedResolution} once it becomes available?',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -100,6 +104,13 @@ const MovieRequestModal = ({
 
   const hasOppositeResolutionAvailable =
     data?.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
+  const hasPendingOppositeResolutionRequest =
+    (data?.mediaInfo?.requests ?? []).some(
+      (request) =>
+        request.is4k !== is4k &&
+        request.status !== MediaRequestStatus.DECLINED &&
+        request.status !== MediaRequestStatus.COMPLETED
+    ) && !hasOppositeResolutionAvailable;
 
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
@@ -149,12 +160,16 @@ const MovieRequestModal = ({
           { appearance: 'success', autoDismiss: true }
         );
       }
-    } catch {
+    } catch (error) {
       setHideRequestModal(false);
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      addToast(
+        (error as AxiosError<{ message?: string }>).response?.data?.message ??
+          intl.formatMessage(messages.requesterror),
+        {
+          appearance: 'error',
+          autoDismiss: true,
+        }
+      );
     } finally {
       setIsUpdating(false);
     }
@@ -170,7 +185,10 @@ const MovieRequestModal = ({
   ]);
 
   const handleRequest = useCallback(() => {
-    if (hasOppositeResolutionAvailable && !showOppositeResolutionWarning) {
+    if (
+      (hasPendingOppositeResolutionRequest || hasOppositeResolutionAvailable) &&
+      !showOppositeResolutionWarning
+    ) {
       setShowOppositeResolutionWarning(true);
       setConfirmOppositeResolutionRequest(false);
       return;
@@ -180,6 +198,7 @@ const MovieRequestModal = ({
     setConfirmOppositeResolutionRequest(false);
     void sendRequest();
   }, [
+    hasPendingOppositeResolutionRequest,
     hasOppositeResolutionAvailable,
     sendRequest,
     showOppositeResolutionWarning,
@@ -428,9 +447,14 @@ const MovieRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
+          title={intl.formatMessage(
+            hasPendingOppositeResolutionRequest
+              ? messages.pendingOppositeResolutionTitle
+              : messages.confirmOppositeResolutionTitle,
+            {
+              existingResolution: getResolutionLabel(!is4k),
+            }
+          )}
           subTitle={data?.title}
           okText={
             confirmOppositeResolutionRequest
@@ -442,10 +466,15 @@ const MovieRequestModal = ({
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
           <p className="text-sm text-gray-300">
-            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
-              existingResolution: getResolutionLabel(!is4k),
-              requestedResolution: getResolutionLabel(is4k),
-            })}
+            {intl.formatMessage(
+              hasPendingOppositeResolutionRequest
+                ? messages.pendingOppositeResolutionMessage
+                : messages.confirmOppositeResolutionMessage,
+              {
+                existingResolution: getResolutionLabel(!is4k),
+                requestedResolution: getResolutionLabel(is4k),
+              }
+            )}
           </p>
         </Modal>
       )}

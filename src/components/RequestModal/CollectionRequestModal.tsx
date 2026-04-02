@@ -13,6 +13,7 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { Collection } from '@server/models/Collection';
+import type { AxiosError } from 'axios';
 import axios from 'axios';
 import { useCallback, useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -32,6 +33,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  pendingOppositeResolutionTitle: 'Already Requested in {existingResolution}',
+  pendingOppositeResolutionMessage:
+    '{count, plural, one {{titles} was} other {{titles} were}} already requested in {existingResolution}, but {count, plural, one {it has} other {they have}} not been found yet. Do you also want to request {count, plural, one {it} other {them}} in {requestedResolution} once {count, plural, one {it becomes} other {they become}} available?',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -210,6 +214,17 @@ const CollectionRequestModal = ({
       selectedParts.includes(part.id) &&
       part.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE
   );
+  const oppositeResolutionPendingParts = (data?.parts ?? []).filter(
+    (part) =>
+      selectedParts.includes(part.id) &&
+      (part.mediaInfo?.requests ?? []).some(
+        (request) =>
+          request.is4k !== is4k &&
+          request.status !== MediaRequestStatus.DECLINED &&
+          request.status !== MediaRequestStatus.COMPLETED
+      ) &&
+      part.mediaInfo?.[is4k ? 'status' : 'status4k'] !== MediaStatus.AVAILABLE
+  );
 
   const formatPartTitles = useCallback(
     (parts: Collection['parts']) => parts.map((part) => part.title).join(', '),
@@ -262,12 +277,16 @@ const CollectionRequestModal = ({
         </span>,
         { appearance: 'success', autoDismiss: true }
       );
-    } catch {
+    } catch (error) {
       setHideRequestModal(false);
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      addToast(
+        (error as AxiosError<{ message?: string }>).response?.data?.message ??
+          intl.formatMessage(messages.requesterror),
+        {
+          appearance: 'error',
+          autoDismiss: true,
+        }
+      );
     } finally {
       setIsUpdating(false);
     }
@@ -284,7 +303,8 @@ const CollectionRequestModal = ({
 
   const handleRequest = useCallback(() => {
     if (
-      oppositeResolutionAvailableParts.length > 0 &&
+      (oppositeResolutionPendingParts.length > 0 ||
+        oppositeResolutionAvailableParts.length > 0) &&
       !showOppositeResolutionWarning
     ) {
       setShowOppositeResolutionWarning(true);
@@ -296,6 +316,7 @@ const CollectionRequestModal = ({
     setConfirmOppositeResolutionRequest(false);
     void sendRequest();
   }, [
+    oppositeResolutionPendingParts.length,
     oppositeResolutionAvailableParts.length,
     sendRequest,
     showOppositeResolutionWarning,
@@ -602,9 +623,14 @@ const CollectionRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
+          title={intl.formatMessage(
+            oppositeResolutionPendingParts.length > 0
+              ? messages.pendingOppositeResolutionTitle
+              : messages.confirmOppositeResolutionTitle,
+            {
+              existingResolution: getResolutionLabel(!is4k),
+            }
+          )}
           subTitle={data?.name}
           okText={
             confirmOppositeResolutionRequest
@@ -616,12 +642,24 @@ const CollectionRequestModal = ({
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
           <p className="text-sm text-gray-300">
-            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
-              count: oppositeResolutionAvailableParts.length,
-              titles: formatPartTitles(oppositeResolutionAvailableParts),
-              existingResolution: getResolutionLabel(!is4k),
-              requestedResolution: getResolutionLabel(is4k),
-            })}
+            {intl.formatMessage(
+              oppositeResolutionPendingParts.length > 0
+                ? messages.pendingOppositeResolutionMessage
+                : messages.confirmOppositeResolutionMessage,
+              {
+                count:
+                  oppositeResolutionPendingParts.length > 0
+                    ? oppositeResolutionPendingParts.length
+                    : oppositeResolutionAvailableParts.length,
+                titles: formatPartTitles(
+                  oppositeResolutionPendingParts.length > 0
+                    ? oppositeResolutionPendingParts
+                    : oppositeResolutionAvailableParts
+                ),
+                existingResolution: getResolutionLabel(!is4k),
+                requestedResolution: getResolutionLabel(is4k),
+              }
+            )}
           </p>
         </Modal>
       )}

@@ -17,6 +17,7 @@ import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { TvDetails } from '@server/models/Tv';
+import type { AxiosError } from 'axios';
 import axios from 'axios';
 import { useCallback, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -57,6 +58,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  pendingOppositeResolutionTitle: 'Already Requested in {existingResolution}',
+  pendingOppositeResolutionMessage:
+    '{seasonCount, plural, one {{seasonList} was} other {{seasonList} were}} already requested in {existingResolution}, but {seasonCount, plural, one {it has} other {they have}} not been found yet. Do you also want to request {seasonCount, plural, one {it} other {them}} in {requestedResolution} once {seasonCount, plural, one {it becomes} other {they become}} available?',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -272,6 +276,34 @@ const TvRequestModal = ({
       }),
     [data?.mediaInfo?.seasons, is4k, seasonsToRequest]
   );
+  const oppositeResolutionPendingSeasons = useMemo(
+    () =>
+      seasonsToRequest.filter((seasonNumber) => {
+        const hasOppositeResolutionRequest = (data?.mediaInfo?.requests ?? [])
+          .filter(
+            (request) =>
+              request.is4k !== is4k &&
+              request.status !== MediaRequestStatus.DECLINED &&
+              request.status !== MediaRequestStatus.COMPLETED
+          )
+          .some((request) =>
+            request.seasons.some(
+              (season) => season.seasonNumber === seasonNumber
+            )
+          );
+
+        if (!hasOppositeResolutionRequest) {
+          return false;
+        }
+
+        const season = data?.mediaInfo?.seasons?.find(
+          (mediaSeason) => mediaSeason.seasonNumber === seasonNumber
+        );
+
+        return season?.[is4k ? 'status' : 'status4k'] !== MediaStatus.AVAILABLE;
+      }),
+    [data?.mediaInfo?.requests, data?.mediaInfo?.seasons, is4k, seasonsToRequest]
+  );
 
   const formatSeasonList = useCallback(
     (seasonNumbers: number[]) =>
@@ -361,12 +393,16 @@ const TvRequestModal = ({
           { appearance: 'success', autoDismiss: true }
         );
       }
-    } catch {
+    } catch (error) {
       setHideRequestModal(false);
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      addToast(
+        (error as AxiosError<{ message?: string }>).response?.data?.message ??
+          intl.formatMessage(messages.requesterror),
+        {
+          appearance: 'error',
+          autoDismiss: true,
+        }
+      );
     } finally {
       if (onUpdating) {
         onUpdating(false);
@@ -392,7 +428,8 @@ const TvRequestModal = ({
 
   const handleRequest = useCallback(() => {
     if (
-      oppositeResolutionAvailableSeasons.length > 0 &&
+      (oppositeResolutionPendingSeasons.length > 0 ||
+        oppositeResolutionAvailableSeasons.length > 0) &&
       !showOppositeResolutionWarning
     ) {
       setShowOppositeResolutionWarning(true);
@@ -404,6 +441,7 @@ const TvRequestModal = ({
     setConfirmOppositeResolutionRequest(false);
     void sendRequest();
   }, [
+    oppositeResolutionPendingSeasons.length,
     oppositeResolutionAvailableSeasons.length,
     sendRequest,
     showOppositeResolutionWarning,
@@ -865,9 +903,14 @@ const TvRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
+          title={intl.formatMessage(
+            oppositeResolutionPendingSeasons.length > 0
+              ? messages.pendingOppositeResolutionTitle
+              : messages.confirmOppositeResolutionTitle,
+            {
+              existingResolution: getResolutionLabel(!is4k),
+            }
+          )}
           subTitle={data?.name}
           okText={
             confirmOppositeResolutionRequest
@@ -879,12 +922,24 @@ const TvRequestModal = ({
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
           <p className="text-sm text-gray-300">
-            {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
-              seasonCount: oppositeResolutionAvailableSeasons.length,
-              seasonList: formatSeasonList(oppositeResolutionAvailableSeasons),
-              existingResolution: getResolutionLabel(!is4k),
-              requestedResolution: getResolutionLabel(is4k),
-            })}
+            {intl.formatMessage(
+              oppositeResolutionPendingSeasons.length > 0
+                ? messages.pendingOppositeResolutionMessage
+                : messages.confirmOppositeResolutionMessage,
+              {
+                seasonCount:
+                  oppositeResolutionPendingSeasons.length > 0
+                    ? oppositeResolutionPendingSeasons.length
+                    : oppositeResolutionAvailableSeasons.length,
+                seasonList: formatSeasonList(
+                  oppositeResolutionPendingSeasons.length > 0
+                    ? oppositeResolutionPendingSeasons
+                    : oppositeResolutionAvailableSeasons
+                ),
+                existingResolution: getResolutionLabel(!is4k),
+                requestedResolution: getResolutionLabel(is4k),
+              }
+            )}
           </p>
         </Modal>
       )}
