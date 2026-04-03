@@ -54,7 +54,7 @@ const messages = defineMessages('components.RequestModal', {
   selectfewerseasons: 'Select fewer than all seasons.',
   singleSeasonOnlyTitle: 'One Season at a Time',
   singleSeasonOnlyMessage:
-    'Please request one season at a time, downloads are deleted after 90 days.',
+    'Please request one season at a time. Older downloads are deleted automatically as storage space runs low',
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
