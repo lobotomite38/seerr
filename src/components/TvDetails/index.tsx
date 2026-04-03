@@ -932,21 +932,6 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                               </div>
                             </>
                           )}
-                          {mSeason?.status === MediaStatus.DELETED &&
-                            request?.status !== MediaRequestStatus.APPROVED && (
-                              <>
-                                <div className="hidden md:flex">
-                                  <Badge badgeType="danger">
-                                    {intl.formatMessage(globalMessages.deleted)}
-                                  </Badge>
-                                </div>
-                                <div className="flex md:hidden">
-                                  <StatusBadgeMini
-                                    status={MediaStatus.DELETED}
-                                  />
-                                </div>
-                              </>
-                            )}
                           {((!mSeason4k &&
                             request4k?.status ===
                               MediaRequestStatus.APPROVED) ||
@@ -1031,27 +1016,6 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                                 <div className="flex md:hidden">
                                   <StatusBadgeMini
                                     status={MediaStatus.AVAILABLE}
-                                    is4k={true}
-                                  />
-                                </div>
-                              </>
-                            )}
-                          {mSeason4k?.status4k === MediaStatus.DELETED &&
-                            request4k?.status !== MediaRequestStatus.APPROVED &&
-                            show4k && (
-                              <>
-                                <div className="hidden md:flex">
-                                  <Badge badgeType="danger">
-                                    {intl.formatMessage(messages.status4k, {
-                                      status: intl.formatMessage(
-                                        globalMessages.deleted
-                                      ),
-                                    })}
-                                  </Badge>
-                                </div>
-                                <div className="flex md:hidden">
-                                  <StatusBadgeMini
-                                    status={MediaStatus.DELETED}
                                     is4k={true}
                                   />
                                 </div>

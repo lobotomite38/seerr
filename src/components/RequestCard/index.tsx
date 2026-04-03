@@ -166,6 +166,14 @@ const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
                       }
                       is4k={requestData.is4k}
                       mediaType={requestData.type}
+                      downloadPending={
+                        requestData.media[
+                          requestData.is4k
+                            ? 'downloadPending4k'
+                            : 'downloadPending'
+                        ]
+                      }
+                      processingUpdatedAt={requestData.media.updatedAt}
                       plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                       serviceUrl={
                         requestData.is4k
@@ -246,6 +254,8 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
         {
           downloadStatus: request.media.downloadStatus,
           downloadStatus4k: request.media.downloadStatus4k,
+          downloadPending: request.media.downloadPending,
+          downloadPending4k: request.media.downloadPending4k,
         },
         15000
       ),
@@ -461,6 +471,12 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                 is4k={requestData.is4k}
                 tmdbId={requestData.media.tmdbId}
                 mediaType={requestData.type}
+                downloadPending={
+                  requestData.media[
+                    requestData.is4k ? 'downloadPending4k' : 'downloadPending'
+                  ]
+                }
+                processingUpdatedAt={requestData.media.updatedAt}
                 releaseDate={isMovie(title) ? title.releaseDate : undefined}
                 releases={isMovie(title) ? title.releases : undefined}
                 compact

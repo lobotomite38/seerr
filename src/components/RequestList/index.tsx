@@ -239,9 +239,6 @@ const RequestList = () => {
               <option value="unavailable">
                 {intl.formatMessage(globalMessages.unavailable)}
               </option>
-              <option value="deleted">
-                {intl.formatMessage(globalMessages.deleted)}
-              </option>
             </select>
           </div>
           <div className="mb-2 flex flex-grow sm:mb-0 lg:flex-grow-0">

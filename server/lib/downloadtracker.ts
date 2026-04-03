@@ -1,6 +1,7 @@
 import RadarrAPI from '@server/api/servarr/radarr';
+import { MediaStatus, MediaType } from '@server/constants/media';
+import dataSource from '@server/datasource';
 import SonarrAPI from '@server/api/servarr/sonarr';
-import { MediaType } from '@server/constants/media';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { uniqWith } from 'lodash';
@@ -26,6 +27,7 @@ export interface DownloadingItem {
 
 class DownloadTracker {
   private radarrServers: Record<number, DownloadingItem[]> = {};
+  private radarrPending: Record<number, Set<number>> = {};
   private sonarrServers: Record<number, DownloadingItem[]> = {};
 
   public getMovieProgress(
@@ -54,8 +56,13 @@ class DownloadTracker {
     );
   }
 
+  public isMoviePending(serverId: number, externalServiceId: number): boolean {
+    return this.radarrPending[serverId]?.has(externalServiceId) ?? false;
+  }
+
   public async resetDownloadTracker() {
     this.radarrServers = {};
+    this.radarrPending = {};
     this.sonarrServers = {};
   }
 
@@ -84,6 +91,15 @@ class DownloadTracker {
             apiKey: server.apiKey,
             url: RadarrAPI.buildUrl(server, '/api/v3'),
           });
+
+          const matchingServers = settings.radarr.filter(
+            (rs) =>
+              rs.hostname === server.hostname &&
+              rs.port === server.port &&
+              rs.baseUrl === server.baseUrl &&
+              rs.id !== server.id
+          );
+          const relatedServiceIds = [server.id, ...matchingServers.map((ms) => ms.id)];
 
           try {
             await radarr.refreshMonitoredDownloads();
@@ -116,15 +132,31 @@ class DownloadTracker {
             );
           }
 
-          // Duplicate this data to matching servers
-          const matchingServers = settings.radarr.filter(
-            (rs) =>
-              rs.hostname === server.hostname &&
-              rs.port === server.port &&
-              rs.baseUrl === server.baseUrl &&
-              rs.id !== server.id
-          );
+          try {
+            const processingMovieIds =
+              await this.getProcessingRadarrMovieIds(relatedServiceIds);
+            const pendingMovieIds = await this.getPendingMovieIds(
+              radarr,
+              processingMovieIds
+            );
+            this.radarrPending[server.id] = pendingMovieIds;
 
+            if (pendingMovieIds.size > 0) {
+              logger.debug(
+                `Found ${pendingMovieIds.size} movie(s) pending import on Radarr server: ${server.name}`,
+                { label: 'Download Tracker' }
+              );
+            }
+          } catch {
+            logger.error(
+              `Unable to get pending movie history from Radarr server: ${server.name}`,
+              {
+                label: 'Download Tracker',
+              }
+            );
+          }
+
+          // Duplicate this data to matching servers
           if (matchingServers.length > 0) {
             logger.debug(
               `Matching download data to ${matchingServers.length} other Radarr server(s)`,
@@ -135,11 +167,90 @@ class DownloadTracker {
           matchingServers.forEach((ms) => {
             if (ms.syncEnabled) {
               this.radarrServers[ms.id] = this.radarrServers[server.id];
+              this.radarrPending[ms.id] = this.radarrPending[server.id];
             }
           });
         }
       })
     );
+  }
+
+  private async getProcessingRadarrMovieIds(
+    serviceIds: number[]
+  ): Promise<number[]> {
+    if (!dataSource.isInitialized || serviceIds.length === 0) {
+      return [];
+    }
+
+    const standardRows = await dataSource
+      .createQueryBuilder()
+      .select('media.externalServiceId', 'externalServiceId')
+      .from('media', 'media')
+      .where('media.mediaType = :mediaType', { mediaType: MediaType.MOVIE })
+      .andWhere('media.status = :status', { status: MediaStatus.PROCESSING })
+      .andWhere('media.serviceId IN (:...serviceIds)', { serviceIds })
+      .andWhere('media.externalServiceId IS NOT NULL')
+      .getRawMany<{ externalServiceId: number }>();
+
+    const fourKRows = await dataSource
+      .createQueryBuilder()
+      .select('media.externalServiceId4k', 'externalServiceId')
+      .from('media', 'media')
+      .where('media.mediaType = :mediaType', { mediaType: MediaType.MOVIE })
+      .andWhere('media.status4k = :status', { status: MediaStatus.PROCESSING })
+      .andWhere('media.serviceId4k IN (:...serviceIds)', { serviceIds })
+      .andWhere('media.externalServiceId4k IS NOT NULL')
+      .getRawMany<{ externalServiceId: number }>();
+
+    return [...standardRows, ...fourKRows]
+      .map((row) => Number(row.externalServiceId))
+      .filter((id) => Number.isInteger(id))
+      .filter((id, index, allIds) => allIds.indexOf(id) === index);
+  }
+
+  private async getPendingMovieIds(
+    radarr: RadarrAPI,
+    movieIds: number[]
+  ): Promise<Set<number>> {
+    const pendingMovieIds = new Set<number>();
+
+    if (movieIds.length === 0) {
+      return pendingMovieIds;
+    }
+
+    const historyResults = await Promise.all(
+      movieIds.map(async (movieId) => {
+        try {
+          const history = await radarr.getMovieHistory(movieId);
+          return { movieId, history };
+        } catch (error) {
+          logger.warn(`Unable to retrieve Radarr history for movie ${movieId}`, {
+            label: 'Download Tracker',
+            errorMessage:
+              error instanceof Error ? error.message : 'Unknown error',
+          });
+          return { movieId, history: [] };
+        }
+      })
+    );
+
+    historyResults.forEach(({ movieId, history }) => {
+      const latestEvent = [...history]
+        .filter((item) => item?.date)
+        .sort(
+          (left, right) =>
+            new Date(right.date).getTime() - new Date(left.date).getTime()
+        )[0];
+
+      if (
+        latestEvent &&
+        String(latestEvent.eventType ?? '').toLowerCase() === 'grabbed'
+      ) {
+        pendingMovieIds.add(movieId);
+      }
+    });
+
+    return pendingMovieIds;
   }
 
   private async updateSonarrDownloads() {

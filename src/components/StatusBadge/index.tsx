@@ -21,15 +21,21 @@ const messages = defineMessages('components.StatusBadge', {
   seasonepisodenumber: 'S{seasonNumber}E{episodeNumber}',
   requestedInTheaters: 'Requested • Still in theaters',
   requestedNotInTheaters: 'Requested • Not in theaters yet',
+  requestedDownloadPending: 'Requested • Download pending',
   requestedNoReleaseFound: 'Requested • No release found yet',
   compactRequestedInTheaters: 'Still in theaters',
   compactRequestedNotInTheaters: 'Not in theaters yet',
+  compactRequestedDownloadPending: 'Download pending',
   compactRequestedNoReleaseFound: 'No release yet',
   digitalReleaseTooltip: 'Digital release is {date}.',
   physicalReleaseTooltip: 'Physical release is {date}.',
   theatricalReleaseTooltip: 'The theatrical release is {date}.',
+  downloadPendingTooltip:
+    'No active download is visible yet. This request is still processing and may still be starting.',
   noReleaseFoundTooltip: 'No digital or physical release has been found yet.',
 });
+
+const RECENT_PROCESSING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 interface MovieReleaseInfo {
   results: {
@@ -58,6 +64,8 @@ interface StatusBadgeProps {
   releases?: MovieReleaseInfo;
   compact?: boolean;
   statusLabelOverride?: string;
+  downloadPending?: boolean;
+  processingUpdatedAt?: string | Date;
 }
 
 const StatusBadge = ({
@@ -74,6 +82,8 @@ const StatusBadge = ({
   releases,
   compact = false,
   statusLabelOverride,
+  downloadPending = false,
+  processingUpdatedAt,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -168,10 +178,29 @@ const StatusBadge = ({
     theatricalReleaseDate &&
     !Number.isNaN(theatricalReleaseDate.getTime()) &&
     theatricalReleaseDate > now;
+  const processingUpdatedDate = processingUpdatedAt
+    ? new Date(processingUpdatedAt)
+    : undefined;
+  const hasRecentProcessingUpdate =
+    processingUpdatedDate &&
+    !Number.isNaN(processingUpdatedDate.getTime()) &&
+    now.getTime() - processingUpdatedDate.getTime() <
+      RECENT_PROCESSING_WINDOW_MS;
+  const hasPendingDownload =
+    mediaType === 'movie' &&
+    status === MediaStatus.PROCESSING &&
+    !inProgress &&
+    (downloadPending || hasRecentProcessingUpdate);
 
   const requestedLabel =
     mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
-      ? nextDigitalRelease || nextPhysicalRelease
+      ? hasPendingDownload
+        ? intl.formatMessage(
+            compact
+              ? messages.compactRequestedDownloadPending
+              : messages.requestedDownloadPending
+          )
+        : nextDigitalRelease || nextPhysicalRelease
         ? intl.formatMessage(
             compact
               ? messages.compactRequestedInTheaters
@@ -192,7 +221,9 @@ const StatusBadge = ({
 
   const requestedTooltipContent =
     mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
-      ? nextDigitalRelease
+      ? hasPendingDownload
+        ? intl.formatMessage(messages.downloadPendingTooltip)
+        : nextDigitalRelease
         ? intl.formatMessage(messages.digitalReleaseTooltip, {
             date: intl.formatDate(nextDigitalRelease.release_date, {
               year: 'numeric',
@@ -251,9 +282,7 @@ const StatusBadge = ({
   const badgeDownloadProgress = (
     <div
       className={`absolute left-0 top-0 z-10 flex h-full ${
-        status === MediaStatus.DELETED
-          ? 'bg-red-600/80'
-          : status === MediaStatus.PROCESSING
+        status === MediaStatus.PROCESSING
             ? 'bg-indigo-500/80'
             : 'bg-green-500/80'
       } transition-all duration-200 ease-in-out`}
@@ -481,71 +510,6 @@ const StatusBadge = ({
                 statusLabelOverride ??
                 intl.formatMessage(globalMessages.blocklisted),
             })}
-          </Badge>
-        </Tooltip>
-      );
-
-    case MediaStatus.DELETED:
-      return (
-        <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
-          className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
-          }`}
-          tooltipConfig={{
-            ...(inProgress && { interactive: true, delayHide: 100 }),
-          }}
-        >
-          <Badge
-            badgeType="danger"
-            href={mediaLink}
-            className={`${
-              inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
-            } overflow-hidden`}
-          >
-            {inProgress && badgeDownloadProgress}
-            <div
-              className={`relative z-20 flex items-center ${
-                inProgress && 'px-2'
-              }`}
-            >
-              <span>
-                {intl.formatMessage(
-                  is4k ? messages.status4k : messages.status,
-                  {
-                    status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.deleted),
-                  }
-                )}
-              </span>
-              {inProgress && (
-                <>
-                  {mediaType === 'tv' &&
-                    downloadItem[0].episode &&
-                    (downloadItem.length > 1 &&
-                    downloadItem.every(
-                      (item) =>
-                        item.downloadId &&
-                        item.downloadId === downloadItem[0].downloadId
-                    ) ? (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonnumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                        })}
-                      </span>
-                    ) : (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonepisodenumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                          episodeNumber: downloadItem[0].episode.episodeNumber,
-                        })}
-                      </span>
-                    ))}
-                  <Spinner className="ml-1 h-3 w-3" />
-                </>
-              )}
-            </div>
           </Badge>
         </Tooltip>
       );

@@ -189,6 +189,8 @@ class Media {
   public serviceUrl4k?: string;
   public downloadStatus?: DownloadingItem[] = [];
   public downloadStatus4k?: DownloadingItem[] = [];
+  public downloadPending = false;
+  public downloadPending4k = false;
 
   public mediaUrl?: string;
   public mediaUrl4k?: string;
@@ -347,6 +349,10 @@ class Media {
           this.serviceId,
           this.externalServiceId
         );
+        this.downloadPending = downloadTracker.isMoviePending(
+          this.serviceId,
+          this.externalServiceId
+        );
       }
 
       if (
@@ -356,6 +362,10 @@ class Media {
         this.serviceId4k !== null
       ) {
         this.downloadStatus4k = downloadTracker.getMovieProgress(
+          this.serviceId4k,
+          this.externalServiceId4k
+        );
+        this.downloadPending4k = downloadTracker.isMoviePending(
           this.serviceId4k,
           this.externalServiceId4k
         );

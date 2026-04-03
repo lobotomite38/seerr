@@ -65,7 +65,14 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
       ),
     ];
 
-    return { downloadStatus, downloadStatus4k };
+    return {
+      downloadStatus,
+      downloadStatus4k,
+      downloadPending: data?.parts.some((item) => item.mediaInfo?.downloadPending),
+      downloadPending4k: data?.parts.some(
+        (item) => item.mediaInfo?.downloadPending4k
+      ),
+    };
   };
 
   const {

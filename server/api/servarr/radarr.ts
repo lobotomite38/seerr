@@ -63,6 +63,15 @@ export interface RadarrMovie {
   };
 }
 
+export interface RadarrHistoryRecord {
+  id: number;
+  movieId: number;
+  sourceTitle?: string;
+  downloadId?: string;
+  eventType?: string;
+  date: string;
+}
+
 class RadarrAPI extends ServarrBase<{ movieId: number }> {
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, cacheName: 'radarr', apiName: 'Radarr' });
@@ -89,6 +98,32 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       throw new Error(`[Radarr] Failed to retrieve movie: ${e.message}`, {
         cause: e,
       });
+    }
+  };
+
+  public getMovieHistory = async (
+    movieId: number
+  ): Promise<RadarrHistoryRecord[]> => {
+    try {
+      const response = await this.axios.get<
+        RadarrHistoryRecord[] | { records?: RadarrHistoryRecord[] }
+      >(
+        '/history/movie',
+        {
+          params: {
+            movieId,
+          },
+        }
+      );
+
+      return Array.isArray(response.data)
+        ? response.data
+        : response.data.records ?? [];
+    } catch (e) {
+      throw new Error(
+        `[Radarr] Failed to retrieve movie history for ${movieId}: ${e.message}`,
+        { cause: e }
+      );
     }
   };
 
