@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+if [[ "${SEERR_AUTO_DEPLOY_ENABLED:-0}" != "1" ]]; then
+  exit 0
+fi
+
 repo_root="$(git rev-parse --show-toplevel)"
 nohup "$repo_root/scripts/deploy_seerr.sh" --trigger "${1:?missing trigger}" >/dev/null 2>&1 &
