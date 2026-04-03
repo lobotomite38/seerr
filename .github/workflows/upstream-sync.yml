@@ -37,6 +37,7 @@ jobs:
         with:
           ref: ${{ env.FORK_BRANCH }}
           fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN != '' && secrets.UPSTREAM_SYNC_TOKEN || github.token }}
 
       - name: Set git identity
         shell: bash
