@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+nohup "$repo_root/scripts/deploy_seerr.sh" --trigger "${1:?missing trigger}" >/dev/null 2>&1 &

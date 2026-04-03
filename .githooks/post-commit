@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+
+"$(git rev-parse --show-toplevel)"/.githooks/_seerr_auto_deploy post-commit
