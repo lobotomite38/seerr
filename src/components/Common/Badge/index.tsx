@@ -5,9 +5,11 @@ interface BadgeProps {
   badgeType?:
     | 'default'
     | 'primary'
+    | 'info'
     | 'danger'
     | 'warning'
     | 'success'
+    | 'muted'
     | 'dark'
     | 'light';
   className?: string;
@@ -44,12 +46,24 @@ const Badge = (
         badgeStyle.push('hover:bg-yellow-500');
       }
       break;
+    case 'info':
+      badgeStyle.push('bg-sky-500/80 border border-sky-500 !text-sky-100');
+      if (href) {
+        badgeStyle.push('hover:bg-sky-500');
+      }
+      break;
     case 'success':
       badgeStyle.push(
         'bg-green-500/80 border border-green-500 !text-green-100'
       );
       if (href) {
         badgeStyle.push('hover:bg-green-500');
+      }
+      break;
+    case 'muted':
+      badgeStyle.push('bg-slate-500/80 border border-slate-400 !text-slate-100');
+      if (href) {
+        badgeStyle.push('hover:bg-slate-500');
       }
       break;
     case 'dark':

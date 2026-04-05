@@ -72,6 +72,12 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
       downloadPending4k: data?.parts.some(
         (item) => item.mediaInfo?.downloadPending4k
       ),
+      waitingForSource: data?.parts.some(
+        (item) => item.mediaInfo?.waitingForSource
+      ),
+      waitingForSource4k: data?.parts.some(
+        (item) => item.mediaInfo?.waitingForSource4k
+      ),
     };
   };
 
@@ -148,10 +154,11 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
     setIsBlocklistUpdating(false);
   };
 
-  const [downloadStatus, downloadStatus4k] = useMemo(() => {
-    const downloadItems = returnCollectionDownloadItems(data);
-    return [downloadItems.downloadStatus, downloadItems.downloadStatus4k];
-  }, [data]);
+  const downloadItems = useMemo(() => returnCollectionDownloadItems(data), [data]);
+  const [downloadStatus, downloadStatus4k] = useMemo(
+    () => [downloadItems.downloadStatus, downloadItems.downloadStatus4k],
+    [downloadItems]
+  );
 
   const [titles, titles4k] = useMemo(() => {
     return [
@@ -351,6 +358,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
               status={collectionStatus}
               downloadItem={downloadStatus}
               title={titles}
+              waitingForSource={downloadItems.waitingForSource}
               statusLabelOverride={
                 isCollectionPartiallyBlocklisted
                   ? intl.formatMessage(globalMessages.partiallyblocklisted)
@@ -372,6 +380,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                   downloadItem={downloadStatus4k}
                   title={titles4k}
                   is4k
+                  waitingForSource={downloadItems.waitingForSource4k}
                   inProgress={data.parts.some(
                     (part) =>
                       (part.mediaInfo?.downloadStatus4k ?? []).length > 0

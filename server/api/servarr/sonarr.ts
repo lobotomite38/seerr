@@ -29,6 +29,8 @@ interface EpisodeResult {
   id: number;
 }
 
+export type SonarrWantedEpisode = EpisodeResult;
+
 export interface SonarrSeries {
   title: string;
   sortTitle: string;
@@ -367,6 +369,33 @@ class SonarrAPI extends ServarrBase<{
         seriesId,
       });
       throw new Error('Failed to get episodes', { cause: e });
+    }
+  }
+
+  public async getWantedMissingEpisodes(): Promise<SonarrWantedEpisode[]> {
+    try {
+      const response = await this.axios.get<
+        SonarrWantedEpisode[] | { records?: SonarrWantedEpisode[] }
+      >('/wanted/missing', {
+        params: {
+          page: 1,
+          pageSize: 1000,
+          sortKey: 'episodes.airDateUtc',
+          sortDirection: 'descending',
+        },
+      });
+
+      return Array.isArray(response.data)
+        ? response.data
+        : response.data.records ?? [];
+    } catch (e) {
+      logger.error('Failed to retrieve Sonarr wanted/missing episodes', {
+        label: 'Sonarr API',
+        errorMessage: e.message,
+      });
+      throw new Error('Failed to get Sonarr wanted/missing episodes', {
+        cause: e,
+      });
     }
   }
 

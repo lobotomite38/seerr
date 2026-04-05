@@ -19,23 +19,17 @@ const messages = defineMessages('components.StatusBadge', {
   managemedia: 'Manage {mediaType}',
   seasonnumber: 'S{seasonNumber}',
   seasonepisodenumber: 'S{seasonNumber}E{episodeNumber}',
-  requestedInTheaters: 'Requested • Still in theaters',
-  requestedNotInTheaters: 'Requested • Not in theaters yet',
-  requestedDownloadPending: 'Requested • Download pending',
-  requestedNoReleaseFound: 'Requested • No release found yet',
-  compactRequestedInTheaters: 'Still in theaters',
-  compactRequestedNotInTheaters: 'Not in theaters yet',
-  compactRequestedDownloadPending: 'Download pending',
-  compactRequestedNoReleaseFound: 'No release yet',
+  requestedReleasePending: 'Requested • Release pending',
+  requestedWaitingForSource: 'Requested • Waiting for source',
+  compactRequestedReleasePending: 'Release pending',
+  compactRequestedWaitingForSource: 'Waiting for source',
   digitalReleaseTooltip: 'Digital release is {date}.',
   physicalReleaseTooltip: 'Physical release is {date}.',
   theatricalReleaseTooltip: 'The theatrical release is {date}.',
-  downloadPendingTooltip:
-    'No active download is visible yet. This request is still processing and may still be starting.',
-  noReleaseFoundTooltip: 'No digital or physical release has been found yet.',
+  waitingForSourceTooltip:
+    'We haven’t found a downloadable release yet. This can happen when a title is hard to source.',
+  genericRequestedTooltip: 'This request is still being processed.',
 });
-
-const RECENT_PROCESSING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 interface MovieReleaseInfo {
   results: {
@@ -65,6 +59,7 @@ interface StatusBadgeProps {
   compact?: boolean;
   statusLabelOverride?: string;
   downloadPending?: boolean;
+  waitingForSource?: boolean;
   processingUpdatedAt?: string | Date;
 }
 
@@ -82,8 +77,7 @@ const StatusBadge = ({
   releases,
   compact = false,
   statusLabelOverride,
-  downloadPending = false,
-  processingUpdatedAt,
+  waitingForSource = false,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -178,51 +172,40 @@ const StatusBadge = ({
     theatricalReleaseDate &&
     !Number.isNaN(theatricalReleaseDate.getTime()) &&
     theatricalReleaseDate > now;
-  const processingUpdatedDate = processingUpdatedAt
-    ? new Date(processingUpdatedAt)
-    : undefined;
-  const hasRecentProcessingUpdate =
-    processingUpdatedDate &&
-    !Number.isNaN(processingUpdatedDate.getTime()) &&
-    now.getTime() - processingUpdatedDate.getTime() <
-      RECENT_PROCESSING_WINDOW_MS;
-  const hasPendingDownload =
+  const hasReleasePending =
     mediaType === 'movie' &&
     status === MediaStatus.PROCESSING &&
     !inProgress &&
-    (downloadPending || hasRecentProcessingUpdate);
+    Boolean(
+      nextDigitalRelease || nextPhysicalRelease || hasFutureTheatricalRelease
+    );
+  const showWaitingForSource =
+    status === MediaStatus.PROCESSING &&
+    !inProgress &&
+    waitingForSource &&
+    !hasReleasePending;
 
   const requestedLabel =
-    mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
-      ? hasPendingDownload
+    status === MediaStatus.PROCESSING && !inProgress
+      ? showWaitingForSource
         ? intl.formatMessage(
             compact
-              ? messages.compactRequestedDownloadPending
-              : messages.requestedDownloadPending
+              ? messages.compactRequestedWaitingForSource
+              : messages.requestedWaitingForSource
           )
-        : nextDigitalRelease || nextPhysicalRelease
+        : hasReleasePending
         ? intl.formatMessage(
             compact
-              ? messages.compactRequestedInTheaters
-              : messages.requestedInTheaters
+              ? messages.compactRequestedReleasePending
+              : messages.requestedReleasePending
           )
-        : hasFutureTheatricalRelease
-          ? intl.formatMessage(
-              compact
-                ? messages.compactRequestedNotInTheaters
-                : messages.requestedNotInTheaters
-            )
-          : intl.formatMessage(
-              compact
-                ? messages.compactRequestedNoReleaseFound
-                : messages.requestedNoReleaseFound
-            )
+        : intl.formatMessage(globalMessages.requested)
       : intl.formatMessage(globalMessages.requested);
 
   const requestedTooltipContent =
-    mediaType === 'movie' && status === MediaStatus.PROCESSING && !inProgress
-      ? hasPendingDownload
-        ? intl.formatMessage(messages.downloadPendingTooltip)
+    status === MediaStatus.PROCESSING && !inProgress
+      ? showWaitingForSource
+        ? intl.formatMessage(messages.waitingForSourceTooltip)
         : nextDigitalRelease
         ? intl.formatMessage(messages.digitalReleaseTooltip, {
             date: intl.formatDate(nextDigitalRelease.release_date, {
@@ -247,7 +230,7 @@ const StatusBadge = ({
                   day: 'numeric',
                 }),
               })
-            : intl.formatMessage(messages.noReleaseFoundTooltip)
+        : intl.formatMessage(messages.genericRequestedTooltip)
       : mediaLinkDescription;
 
   const tooltipContent =
@@ -283,8 +266,8 @@ const StatusBadge = ({
     <div
       className={`absolute left-0 top-0 z-10 flex h-full ${
         status === MediaStatus.PROCESSING
-            ? 'bg-indigo-500/80'
-            : 'bg-green-500/80'
+          ? 'bg-sky-500/80'
+          : 'bg-green-500/80'
       } transition-all duration-200 ease-in-out`}
       style={{
         width: `${
@@ -437,7 +420,15 @@ const StatusBadge = ({
           }}
         >
           <Badge
-            badgeType="primary"
+            badgeType={
+              inProgress
+                ? 'info'
+                : showWaitingForSource
+                  ? 'muted'
+                  : hasReleasePending
+                    ? 'warning'
+                    : 'primary'
+            }
             href={mediaLink}
             className={`${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'

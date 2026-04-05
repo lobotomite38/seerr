@@ -103,9 +103,9 @@ const messages = defineMessages('components.MovieDetails', {
   digitalReleaseStatus: 'Digital release: {date}',
   physicalReleaseStatus: 'Physical release: {date}',
   theatricalReleaseStatus: 'Theatrical release: {date}',
-  downloadPendingStatus:
-    'Download pending. No active download is visible yet, but this request is still processing.',
-  noReleaseFoundStatus: 'No digital or physical release has been found yet.',
+  waitingForSourceStatus:
+    'We haven’t found a downloadable release yet. This can happen when a title is hard to source.',
+  genericProcessingStatus: 'This request is still being processed.',
   watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
   watchlistDeleted:
     '<strong>{title}</strong> Removed from watchlist successfully!',
@@ -113,8 +113,6 @@ const messages = defineMessages('components.MovieDetails', {
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
 });
-
-const RECENT_PROCESSING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 interface MovieDetailsProps {
   movie?: MovieDetailsType;
@@ -218,21 +216,6 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     const theatricalReleaseDate = data.releaseDate
       ? new Date(data.releaseDate)
       : undefined;
-    const processingUpdatedDate = data.mediaInfo?.updatedAt
-      ? new Date(data.mediaInfo.updatedAt)
-      : undefined;
-    const hasRecentProcessingUpdate =
-      processingUpdatedDate &&
-      !Number.isNaN(processingUpdatedDate.getTime()) &&
-      now.getTime() - processingUpdatedDate.getTime() <
-        RECENT_PROCESSING_WINDOW_MS;
-    const hasPendingDownload =
-      data.mediaInfo.downloadPending || hasRecentProcessingUpdate;
-
-    if (hasPendingDownload) {
-      return intl.formatMessage(messages.downloadPendingStatus);
-    }
-
     if (
       theatricalReleaseDate &&
       !Number.isNaN(theatricalReleaseDate.getTime()) &&
@@ -247,7 +230,11 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       });
     }
 
-    return intl.formatMessage(messages.noReleaseFoundStatus);
+    if (data.mediaInfo.waitingForSource) {
+      return intl.formatMessage(messages.waitingForSourceStatus);
+    }
+
+    return intl.formatMessage(messages.genericProcessingStatus);
   }, [data, intl]);
 
   const sortedCrew = useMemo(
@@ -608,8 +595,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
               downloadItem={data.mediaInfo?.downloadStatus}
               title={data.title}
               inProgress={(data.mediaInfo?.downloadStatus ?? []).length > 0}
-              downloadPending={data.mediaInfo?.downloadPending}
-              processingUpdatedAt={data.mediaInfo?.updatedAt}
+              waitingForSource={data.mediaInfo?.waitingForSource}
               releaseDate={data.releaseDate}
               releases={data.releases}
               tmdbId={data.mediaInfo?.tmdbId}
@@ -636,8 +622,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                   inProgress={
                     (data.mediaInfo?.downloadStatus4k ?? []).length > 0
                   }
-                  downloadPending={data.mediaInfo?.downloadPending4k}
-                  processingUpdatedAt={data.mediaInfo?.updatedAt}
+                  waitingForSource={data.mediaInfo?.waitingForSource4k}
                   releaseDate={data.releaseDate}
                   releases={data.releases}
                   tmdbId={data.mediaInfo?.tmdbId}

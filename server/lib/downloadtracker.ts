@@ -28,7 +28,9 @@ export interface DownloadingItem {
 class DownloadTracker {
   private radarrServers: Record<number, DownloadingItem[]> = {};
   private radarrPending: Record<number, Set<number>> = {};
+  private radarrMissing: Record<number, Set<number>> = {};
   private sonarrServers: Record<number, DownloadingItem[]> = {};
+  private sonarrWantedMissing: Record<number, Set<number>> = {};
 
   public getMovieProgress(
     serverId: number,
@@ -60,10 +62,23 @@ class DownloadTracker {
     return this.radarrPending[serverId]?.has(externalServiceId) ?? false;
   }
 
+  public isMovieMissing(serverId: number, externalServiceId: number): boolean {
+    return this.radarrMissing[serverId]?.has(externalServiceId) ?? false;
+  }
+
+  public isSeriesWantedMissing(
+    serverId: number,
+    externalServiceId: number
+  ): boolean {
+    return this.sonarrWantedMissing[serverId]?.has(externalServiceId) ?? false;
+  }
+
   public async resetDownloadTracker() {
     this.radarrServers = {};
     this.radarrPending = {};
+    this.radarrMissing = {};
     this.sonarrServers = {};
+    this.sonarrWantedMissing = {};
   }
 
   public updateDownloads() {
@@ -104,6 +119,7 @@ class DownloadTracker {
           try {
             await radarr.refreshMonitoredDownloads();
             const queueItems = await radarr.getQueue();
+            const movies = await radarr.getMovies();
 
             this.radarrServers[server.id] = queueItems.map((item) => ({
               externalId: item.movieId,
@@ -123,9 +139,22 @@ class DownloadTracker {
                 { label: 'Download Tracker' }
               );
             }
+
+            this.radarrMissing[server.id] = new Set(
+              movies
+                .filter((movie) => movie.monitored && !movie.hasFile)
+                .map((movie) => movie.id)
+            );
+
+            if (this.radarrMissing[server.id].size > 0) {
+              logger.debug(
+                `Found ${this.radarrMissing[server.id].size} movie(s) missing on Radarr server: ${server.name}`,
+                { label: 'Download Tracker' }
+              );
+            }
           } catch {
             logger.error(
-              `Unable to get queue from Radarr server: ${server.name}`,
+              `Unable to get queue or movie state from Radarr server: ${server.name}`,
               {
                 label: 'Download Tracker',
               }
@@ -168,6 +197,7 @@ class DownloadTracker {
             if (ms.syncEnabled) {
               this.radarrServers[ms.id] = this.radarrServers[server.id];
               this.radarrPending[ms.id] = this.radarrPending[server.id];
+              this.radarrMissing[ms.id] = this.radarrMissing[server.id];
             }
           });
         }
@@ -277,6 +307,7 @@ class DownloadTracker {
           try {
             await sonarr.refreshMonitoredDownloads();
             const queueItems = await sonarr.getQueue();
+            const wantedMissingEpisodes = await sonarr.getWantedMissingEpisodes();
 
             this.sonarrServers[server.id] = queueItems.map((item) => ({
               externalId: item.seriesId,
@@ -297,9 +328,22 @@ class DownloadTracker {
                 { label: 'Download Tracker' }
               );
             }
+
+            this.sonarrWantedMissing[server.id] = new Set(
+              wantedMissingEpisodes
+                .filter((episode) => episode.monitored && !episode.hasFile)
+                .map((episode) => episode.seriesId)
+            );
+
+            if (this.sonarrWantedMissing[server.id].size > 0) {
+              logger.debug(
+                `Found ${this.sonarrWantedMissing[server.id].size} series with wanted/missing episodes on Sonarr server: ${server.name}`,
+                { label: 'Download Tracker' }
+              );
+            }
           } catch {
             logger.error(
-              `Unable to get queue from Sonarr server: ${server.name}`,
+              `Unable to get queue or wanted/missing state from Sonarr server: ${server.name}`,
               {
                 label: 'Download Tracker',
               }
@@ -325,6 +369,8 @@ class DownloadTracker {
           matchingServers.forEach((ms) => {
             if (ms.syncEnabled) {
               this.sonarrServers[ms.id] = this.sonarrServers[server.id];
+              this.sonarrWantedMissing[ms.id] =
+                this.sonarrWantedMissing[server.id];
             }
           });
         }
