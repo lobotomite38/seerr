@@ -146,6 +146,8 @@ export interface MainSettings {
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;
+  blocklistRegion: string;
+  blocklistLanguage: string;
   blocklistedTags: string;
   blocklistedTagsLimit: number;
   mediaServerType: number;
@@ -410,6 +412,8 @@ class Settings {
         discoverRegion: '',
         streamingRegion: '',
         originalLanguage: '',
+        blocklistRegion: '',
+        blocklistLanguage: '',
         blocklistedTags: '',
         blocklistedTagsLimit: 50,
         mediaServerType: MediaServerType.NOT_CONFIGURED,
