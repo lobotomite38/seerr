@@ -77,6 +77,16 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     super({ url, apiKey, cacheName: 'radarr', apiName: 'Radarr' });
   }
 
+  private async lookupMovieByTmdbId(id: number): Promise<RadarrMovie | null> {
+    const response = await this.axios.get<RadarrMovie[]>('/movie/lookup', {
+      params: {
+        term: `tmdb:${id}`,
+      },
+    });
+
+    return response.data[0] ?? null;
+  }
+
   public getMovies = async (): Promise<RadarrMovie[]> => {
     try {
       const response = await this.axios.get<RadarrMovie[]>('/movie');
@@ -129,17 +139,13 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
 
   public async getMovieByTmdbId(id: number): Promise<RadarrMovie> {
     try {
-      const response = await this.axios.get<RadarrMovie[]>('/movie/lookup', {
-        params: {
-          term: `tmdb:${id}`,
-        },
-      });
+      const movie = await this.lookupMovieByTmdbId(id);
 
-      if (!response.data[0]) {
+      if (!movie) {
         throw new Error('Movie not found');
       }
 
-      return response.data[0];
+      return movie;
     } catch (e) {
       logger.error('Error retrieving movie by TMDB ID', {
         label: 'Radarr API',
@@ -270,6 +276,39 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       }
       return response.data;
     } catch (e) {
+      try {
+        const fallbackMovie = await this.lookupMovieByTmdbId(options.tmdbId);
+
+        if (fallbackMovie) {
+          logger.warn(
+            'Radarr add request failed, but the movie exists after retry lookup. Treating request as successful.',
+            {
+              label: 'Radarr',
+              errorMessage: e.message,
+              movieId: fallbackMovie.id,
+              movieTitle: fallbackMovie.title,
+              tmdbId: options.tmdbId,
+            }
+          );
+
+          logger.debug('Radarr recovered add details', {
+            label: 'Radarr',
+            movie: fallbackMovie,
+          });
+
+          return fallbackMovie;
+        }
+      } catch (lookupError) {
+        logger.warn('Radarr add failed and retry lookup did not complete', {
+          label: 'Radarr',
+          errorMessage:
+            lookupError instanceof Error
+              ? lookupError.message
+              : String(lookupError),
+          tmdbId: options.tmdbId,
+        });
+      }
+
       logger.error(
         'Failed to add movie to Radarr. This might happen if the movie already exists, in which case you can safely ignore this error.',
         {
