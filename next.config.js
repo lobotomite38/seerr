@@ -27,6 +27,7 @@ module.exports = {
 
     return config;
   },
+  transpilePackages: ['country-flag-icons'],
   experimental: {
     cpus: 1,
     scrollRestoration: true,
