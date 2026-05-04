@@ -7,7 +7,8 @@ CONFIG_DIRECTORY="/config/lobotomite/seerr-staging-20260322-111334"
 SESSION_NAME="seerr-staging-prod"
 STATUS_URL="http://127.0.0.1:20829/api/v1/status"
 PORT="20829"
-NODE_BIN="/usr/bin/node"
+NODE_BIN="/mnt/mpathae/lobotomite/.nvm/versions/node/v22.19.0/bin/node"
+PNPM_BIN="/usr/bin/pnpm"
 NODE_OPTIONS="--max-old-space-size=8192"
 LOG_DIR="/config/lobotomite/logs"
 LOG_FILE="$LOG_DIR/seerr_deploy.log"
@@ -67,6 +68,16 @@ if [[ ! -d "$CONFIG_DIRECTORY" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$NODE_BIN" ]]; then
+  log "Configured Node binary is missing or not executable: $NODE_BIN"
+  exit 1
+fi
+
+if [[ ! -x "$PNPM_BIN" ]]; then
+  log "Configured pnpm binary is missing or not executable: $PNPM_BIN"
+  exit 1
+fi
+
 current_branch="$(git -C "$SOURCE_DIR" branch --show-current)"
 head_commit="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
 
@@ -105,7 +116,8 @@ log "Source sync complete. Building runtime app."
 (
   cd "$TARGET_DIR"
   export NODE_OPTIONS="$NODE_OPTIONS"
-  pnpm build
+  export PATH="$(dirname "$NODE_BIN"):$PATH"
+  "$PNPM_BIN" build
 ) >>"$LOG_FILE" 2>&1
 
 log "Build complete. Restarting tmux session '$SESSION_NAME'."
