@@ -115,8 +115,10 @@ rsync -a --delete \
 log "Source sync complete. Building runtime app."
 (
   cd "$TARGET_DIR"
+  export CI="true"
   export NODE_OPTIONS="$NODE_OPTIONS"
   export PATH="$(dirname "$NODE_BIN"):$PATH"
+  "$PNPM_BIN" install --frozen-lockfile
   "$PNPM_BIN" build
 ) >>"$LOG_FILE" 2>&1
 
