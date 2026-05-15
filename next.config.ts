@@ -1,7 +1,6 @@
-/**
- * @type {import('next').NextConfig}
- */
-module.exports = {
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
   env: {
     commitTag: process.env.COMMIT_TAG || 'local',
   },
@@ -28,9 +27,19 @@ module.exports = {
     return config;
   },
   transpilePackages: ['country-flag-icons'],
+  turbopack: {
+    rules: {
+      '*.svg': {
+        loaders: ['@svgr/webpack'],
+        as: '*.js',
+      },
+    },
+  },
   experimental: {
     cpus: 1,
     scrollRestoration: true,
     largePageDataBytes: 512 * 1000,
   },
 };
+
+export default nextConfig;
