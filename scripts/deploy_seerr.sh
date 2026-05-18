@@ -122,6 +122,16 @@ log "Source sync complete. Building runtime app."
   "$PNPM_BIN" build
 ) >>"$LOG_FILE" 2>&1
 
+if ! find "$TARGET_DIR/.next/static/css" -maxdepth 1 -type f -name '*.css' | grep -q .; then
+  log "Build did not produce any Next CSS assets; refusing to restart."
+  exit 1
+fi
+
+if ! find "$TARGET_DIR/.next/static/chunks" -maxdepth 1 -type f -name '*.js' | grep -q .; then
+  log "Build did not produce any Next JS chunks; refusing to restart."
+  exit 1
+fi
+
 log "Build complete. Restarting tmux session '$SESSION_NAME'."
 {
   tmux kill-session -t "$SESSION_NAME" >/dev/null 2>&1 || true
