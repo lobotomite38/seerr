@@ -144,6 +144,11 @@ for _ in 1 2 3 4 5; do
   if curl -fsS --max-time 5 "$STATUS_URL" >/dev/null 2>&1; then
     printf '%s\n' "$head_commit" >"$STATE_FILE"
     log "Deploy successful. Status endpoint is healthy for commit $head_commit."
+    if /usr/bin/python3 /mnt/mpathae/lobotomite/scripts/seerr_request_audit.py --notify >>"$LOG_FILE" 2>&1; then
+      log "Post-deploy Seerr request audit completed cleanly."
+    else
+      log "Post-deploy Seerr request audit found stale completed TV season request rows; notification sent if cooldown allowed."
+    fi
     exit 0
   fi
 done
