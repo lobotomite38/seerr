@@ -21,8 +21,8 @@ import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
 import type { SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { MediaRequestSubscriber } from '@server/subscriber/MediaRequestSubscriber';
 import { setupTestDb } from '@server/test/db';
-import { MediaRequestSubscriber } from './MediaRequestSubscriber';
 
 let addSeriesCalls: AddSeriesOptions[] = [];
 
