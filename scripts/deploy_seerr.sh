@@ -113,6 +113,7 @@ rsync -a --delete \
   "$SOURCE_DIR"/ "$TARGET_DIR"/ >>"$LOG_FILE" 2>&1
 
 log "Source sync complete. Building runtime app."
+rm -rf "$TARGET_DIR/.next" "$TARGET_DIR/dist"
 (
   cd "$TARGET_DIR"
   export CI="true"
