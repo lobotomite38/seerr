@@ -369,15 +369,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           }
         }
 
-        if (await this.areRequestedTvSeasonsAvailable(media.id, entity)) {
-          logger.warn(
-            'Requested seasons already available, marking request as COMPLETED',
-            {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-            }
-          );
+        if (
+          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
+        ) {
+          logger.warn('Media already exists, marking request as COMPLETED', {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+          });
 
           const requestRepository = getRepository(MediaRequest);
           entity.status = MediaRequestStatus.COMPLETED;
@@ -565,14 +564,15 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           throw new Error('Media data not found');
         }
 
-        if (
-          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
-        ) {
-          logger.warn('Media already exists, marking request as COMPLETED', {
-            label: 'Media Request',
-            requestId: entity.id,
-            mediaId: entity.media.id,
-          });
+        if (await this.areRequestedTvSeasonsAvailable(media.id, entity)) {
+          logger.warn(
+            'Requested seasons already available, marking request as COMPLETED',
+            {
+              label: 'Media Request',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+            }
+          );
 
           const requestRepository = getRepository(MediaRequest);
           entity.status = MediaRequestStatus.COMPLETED;
