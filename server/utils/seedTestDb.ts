@@ -15,6 +15,35 @@ export interface SeedDbOptions {
 const TEST_USER_PASSWORD_HASH =
   '$2b$12$Z5V2P5HZgmx4/AnWFMZN1.aD5AM1NucNi.mhNTSQ9oVtmdzu7Le/a';
 
+function assertTestDbAccess(action: string): void {
+  const isExplicitlyAllowed = process.env.ALLOW_TEST_DB_RESET === 'true';
+  const isTestRuntime = process.env.NODE_ENV === 'test';
+  const database =
+    dataSource.options.type === 'sqlite' ? dataSource.options.database : '';
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `Refusing to ${action} while NODE_ENV=production. Test DB helpers must never run in the production server.`
+    );
+  }
+
+  if (database === ':memory:') {
+    return;
+  }
+
+  if (process.env.CONFIG_DIRECTORY && !isExplicitlyAllowed) {
+    throw new Error(
+      `Refusing to ${action} while CONFIG_DIRECTORY is set. Set ALLOW_TEST_DB_RESET=true only for intentional test DB preparation.`
+    );
+  }
+
+  if (!isTestRuntime && !isExplicitlyAllowed) {
+    throw new Error(
+      `Refusing to ${action} outside NODE_ENV=test. Set ALLOW_TEST_DB_RESET=true only for intentional test DB preparation.`
+    );
+  }
+}
+
 /**
  * Seeds test users into the database.
  * Assumes the database schema is already set up.
@@ -68,6 +97,8 @@ async function seedTestUsers(): Promise<void> {
  * Used by both Cypress tests and Vitest unit tests.
  */
 export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
+  assertTestDbAccess('seed the test database');
+
   const dbConnection = dataSource.isInitialized
     ? dataSource
     : await dataSource.initialize();
@@ -91,6 +122,8 @@ export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
  * Assumes DB has been initialized.
  */
 export async function resetTestDb(): Promise<void> {
+  assertTestDbAccess('reset the test database');
+
   await dataSource.synchronize(true);
   await seedTestUsers();
 }

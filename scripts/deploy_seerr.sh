@@ -133,6 +133,13 @@ if ! find "$TARGET_DIR/.next/static/chunks" -maxdepth 1 -type f -name '*.js' | g
   exit 1
 fi
 
+test_artifacts="$(find "$TARGET_DIR/dist" -type f \( -name '*.test.js' -o -name '*.spec.js' -o -path '*/test/*' \) -print)"
+if [[ -n "$test_artifacts" ]]; then
+  log "Server build produced test artifacts under dist; refusing to restart."
+  printf '%s\n' "$test_artifacts" >>"$LOG_FILE"
+  exit 1
+fi
+
 log "Build complete. Restarting tmux session '$SESSION_NAME'."
 {
   tmux kill-session -t "$SESSION_NAME" >/dev/null 2>&1 || true
