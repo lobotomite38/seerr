@@ -19,6 +19,11 @@ import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { getHostname } from '@server/utils/getHostname';
 
+type AvailabilityLookup = {
+  exists: boolean;
+  known: boolean;
+};
+
 class AvailabilitySync {
   public running = false;
   private plexClient: PlexAPI;
@@ -142,8 +147,8 @@ class AvailabilitySync {
           //   await this.mediaExistsInJellyfin(media, false);
           // }
 
-          const existsInRadarr = await this.mediaExistsInRadarr(media, false);
-          const existsInRadarr4k = await this.mediaExistsInRadarr(media, true);
+          const radarrLookup = await this.mediaExistsInRadarr(media, false);
+          const radarrLookup4k = await this.mediaExistsInRadarr(media, true);
 
           // plex
           if (mediaServerType === MediaServerType.PLEX) {
@@ -151,7 +156,7 @@ class AvailabilitySync {
             const { existsInPlex: existsInPlex4k } =
               await this.mediaExistsInPlex(media, true);
 
-            if (existsInPlex || existsInRadarr) {
+            if (existsInPlex || radarrLookup.exists) {
               movieExists = true;
               logger.debug(
                 `The non-4K movie [TMDB ID ${media.tmdbId}] still exists. Preventing removal.`,
@@ -161,7 +166,7 @@ class AvailabilitySync {
               );
             }
 
-            if (existsInPlex4k || existsInRadarr4k) {
+            if (existsInPlex4k || radarrLookup4k.exists) {
               movieExists4k = true;
               logger.debug(
                 `The 4K movie [TMDB ID ${media.tmdbId}] still exists. Preventing removal.`,
@@ -184,7 +189,7 @@ class AvailabilitySync {
             const { existsInJellyfin: existsInJellyfin4k } =
               await this.mediaExistsInJellyfin(media, true);
 
-            if (existsInJellyfin || existsInRadarr) {
+            if (existsInJellyfin || radarrLookup.exists) {
               movieExists = true;
               logger.debug(
                 `The non-4K movie [TMDB ID ${media.tmdbId}] still exists. Preventing removal.`,
@@ -194,7 +199,7 @@ class AvailabilitySync {
               );
             }
 
-            if (existsInJellyfin4k || existsInRadarr4k) {
+            if (existsInJellyfin4k || radarrLookup4k.exists) {
               movieExists4k = true;
               logger.debug(
                 `The 4K movie [TMDB ID ${media.tmdbId}] still exists. Preventing removal.`,
@@ -227,11 +232,19 @@ class AvailabilitySync {
             );
           }
 
-          if (!movieExists && media.status === MediaStatus.AVAILABLE) {
+          if (
+            !movieExists &&
+            radarrLookup.known &&
+            media.status === MediaStatus.AVAILABLE
+          ) {
             await this.mediaUpdater(media, false, mediaServerType);
           }
 
-          if (!movieExists4k && media.status4k === MediaStatus.AVAILABLE) {
+          if (
+            !movieExists4k &&
+            radarrLookup4k.known &&
+            media.status4k === MediaStatus.AVAILABLE
+          ) {
             await this.mediaUpdater(media, true, mediaServerType);
           }
         }
@@ -673,8 +686,8 @@ class AvailabilitySync {
   private async mediaExistsInRadarr(
     media: Media,
     is4k: boolean
-  ): Promise<boolean> {
-    let existsInRadarr = false;
+  ): Promise<AvailabilityLookup> {
+    let lookup: AvailabilityLookup = { exists: false, known: true };
 
     const hasSameServerInBothModes = this.radarrServers.some((a) =>
       this.radarrServers.some(
@@ -716,15 +729,15 @@ class AvailabilitySync {
 
           if (hasSameServerInBothModes && resolution?.length === 2) {
             // Same server in both modes then use resolution to distinguish
-            existsInRadarr = is4k ? is4kMovie : !is4kMovie;
+            lookup = { exists: is4k ? is4kMovie : !is4kMovie, known: true };
           } else {
             // One server type and if file exists, count it
-            existsInRadarr = true;
+            lookup = { exists: true, known: true };
           }
         }
       } catch (ex) {
         if (!ex.message.includes('404')) {
-          existsInRadarr = true;
+          lookup.known = false;
           logger.debug(
             `Failure retrieving the ${is4k ? '4K' : 'non-4K'} movie [TMDB ID ${
               media.tmdbId
@@ -737,10 +750,10 @@ class AvailabilitySync {
         }
       }
 
-      if (existsInRadarr) break;
+      if (lookup.exists) break;
     }
 
-    return existsInRadarr;
+    return lookup;
   }
 
   private async mediaExistsInSonarr(

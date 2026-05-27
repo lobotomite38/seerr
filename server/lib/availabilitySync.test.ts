@@ -8,6 +8,7 @@ import type {
 import JellyfinAPI from '@server/api/jellyfin';
 import type { PlexMetadata } from '@server/api/plexapi';
 import PlexAPI from '@server/api/plexapi';
+import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SonarrSeason, SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
@@ -21,7 +22,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import type { SonarrSettings } from '@server/lib/settings';
+import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 
@@ -117,6 +118,19 @@ let getSeriesByIdImpl: (id: number) => Promise<SonarrSeries> = async () => {
 Object.defineProperty(SonarrAPI.prototype, 'getSeriesById', {
   get() {
     return async (id: number) => getSeriesByIdImpl(id);
+  },
+  set() {},
+  configurable: true,
+});
+
+// --- Mock RadarrAPI ---
+let getMovieImpl: (args: { id: number }) => Promise<RadarrMovie> = async () => {
+  throw new Error('404');
+};
+
+Object.defineProperty(RadarrAPI.prototype, 'getMovie', {
+  get() {
+    return async (args: { id: number }) => getMovieImpl(args);
   },
   set() {},
   configurable: true,
@@ -232,6 +246,33 @@ function configureSonarr(overrides: Partial<SonarrSettings>[] = [{}]): void {
     ...o,
   })) as SonarrSettings[];
   settings.radarr = [];
+}
+
+function configureRadarr(overrides: Partial<RadarrSettings>[] = [{}]): void {
+  const settings = getSettings();
+  settings.radarr = overrides.map((o, i) => ({
+    id: i,
+    name: `Radarr ${i}`,
+    hostname: 'localhost',
+    port: 7878,
+    apiKey: 'test-key',
+    baseUrl: '',
+    useSsl: false,
+    activeProfileId: 1,
+    activeProfileName: 'HD',
+    activeDirectory: '/movies',
+    minimumAvailability: 'released',
+    tags: [],
+    is4k: false,
+    isDefault: i === 0,
+    syncEnabled: true,
+    preventSearch: false,
+    tagRequests: false,
+    overrideRule: [],
+    externalUrl: '',
+    ...o,
+  })) as RadarrSettings[];
+  settings.sonarr = [];
 }
 
 function configureJellyfin(): void {
@@ -356,6 +397,49 @@ function fakePlexShow(ratingKey: string): PlexMetadata {
   };
 }
 
+// --- Radarr helpers ---
+function fakeRadarrMovie(
+  id: number,
+  hasFile: boolean,
+  resolution = '1920x1080'
+): RadarrMovie {
+  return {
+    id,
+    title: `Test Movie ${id}`,
+    isAvailable: true,
+    monitored: true,
+    tmdbId: 9000 + id,
+    imdbId: `tt${id}`,
+    titleSlug: `test-movie-${id}`,
+    folderName: `Test Movie ${id}`,
+    path: `/movies/Test Movie ${id}`,
+    profileId: 1,
+    qualityProfileId: 1,
+    added: '2024-01-01T00:00:00Z',
+    hasFile,
+    tags: [],
+    movieFile: hasFile
+      ? {
+          id: id + 1000,
+          movieId: id,
+          size: 1024,
+          dateAdded: '2024-01-02T00:00:00Z',
+          qualityCutoffNotMet: false,
+          mediaInfo: {
+            id: id + 2000,
+            audioBitrate: 0,
+            audioChannels: 2,
+            audioStreamCount: 1,
+            videoBitDepth: 8,
+            videoBitrate: 0,
+            videoFps: 23.976,
+            resolution,
+          },
+        }
+      : undefined,
+  };
+}
+
 // --- Sonarr helpers ---
 function fakeSonarrSeasons(
   totalSeasons: number,
@@ -386,6 +470,9 @@ describe('AvailabilitySync', () => {
     };
     getChildrenMetadataImpl = async () => [];
     getSeriesByIdImpl = async () => {
+      throw new Error('404');
+    };
+    getMovieImpl = async () => {
       throw new Error('404');
     };
     getTvShowImpl = async ({ tvId }) =>
@@ -426,6 +513,162 @@ describe('AvailabilitySync', () => {
       admin.username = 'admin';
       await userRepository.save(admin);
     }
+  });
+
+  describe('Movie availability - Radarr', () => {
+    it('leaves a PROCESSING movie unchanged when Radarr lookup fails', async () => {
+      configurePlex();
+      configureRadarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 3000;
+      media.mediaType = MediaType.MOVIE;
+      media.status = MediaStatus.PROCESSING;
+      media.externalServiceId = 300;
+      media.serviceId = 1;
+      media.seasons = [];
+
+      await mediaRepository.save(media);
+
+      getMovieImpl = async () => {
+        throw new Error('connect ETIMEDOUT');
+      };
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 3000 },
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.PROCESSING);
+      assert.strictEqual(updated.externalServiceId, 300);
+      assert.strictEqual(updated.serviceId, 1);
+    });
+
+    it('leaves a PROCESSING movie unchanged when Radarr confirms it has no file', async () => {
+      configurePlex();
+      configureRadarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 3001;
+      media.mediaType = MediaType.MOVIE;
+      media.status = MediaStatus.PROCESSING;
+      media.externalServiceId = 301;
+      media.serviceId = 1;
+      media.seasons = [];
+
+      await mediaRepository.save(media);
+
+      getMovieImpl = async ({ id }) => fakeRadarrMovie(id, false);
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 3001 },
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.PROCESSING);
+      assert.strictEqual(updated.externalServiceId, 301);
+      assert.strictEqual(updated.serviceId, 1);
+    });
+
+    it('promotes a PROCESSING movie when Radarr confirms it has a file', async () => {
+      configurePlex();
+      configureRadarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 3002;
+      media.mediaType = MediaType.MOVIE;
+      media.status = MediaStatus.PROCESSING;
+      media.externalServiceId = 302;
+      media.serviceId = 1;
+      media.seasons = [];
+
+      await mediaRepository.save(media);
+
+      getMovieImpl = async ({ id }) => fakeRadarrMovie(id, true);
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 3002 },
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
+      assert.strictEqual(updated.externalServiceId, 302);
+      assert.strictEqual(updated.serviceId, 1);
+    });
+
+    it('leaves an AVAILABLE movie unchanged when Radarr lookup fails', async () => {
+      configurePlex();
+      configureRadarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 3003;
+      media.mediaType = MediaType.MOVIE;
+      media.status = MediaStatus.AVAILABLE;
+      media.externalServiceId = 303;
+      media.serviceId = 1;
+      media.seasons = [];
+
+      await mediaRepository.save(media);
+
+      getMovieImpl = async () => {
+        throw new Error('connect ETIMEDOUT');
+      };
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 3003 },
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
+      assert.strictEqual(updated.externalServiceId, 303);
+      assert.strictEqual(updated.serviceId, 1);
+    });
+
+    it('removes an AVAILABLE movie when Radarr and Plex confirm it is missing', async () => {
+      configurePlex();
+      configureRadarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 3004;
+      media.mediaType = MediaType.MOVIE;
+      media.status = MediaStatus.AVAILABLE;
+      media.externalServiceId = 304;
+      media.serviceId = 1;
+      media.ratingKey = 'missing-plex-movie';
+      media.seasons = [];
+
+      await mediaRepository.save(media);
+
+      getMovieImpl = async ({ id }) => fakeRadarrMovie(id, false);
+      getMetadataImpl = async () => {
+        throw new Error('404');
+      };
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 3004 },
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.DELETED);
+      assert.strictEqual(updated.externalServiceId, null);
+      assert.strictEqual(updated.serviceId, null);
+      assert.strictEqual(updated.ratingKey, null);
+    });
   });
 
   describe('TV season availability - Jellyfin', () => {
