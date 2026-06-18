@@ -66,7 +66,23 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin "${CUSTOM_BRANCH}" --prune
           git checkout -B "${CUSTOM_BRANCH}" "origin/${CUSTOM_BRANCH}"
-          git merge --no-edit "${FORK_BRANCH}"
+          if ! git merge --no-edit "${FORK_BRANCH}"; then
+            conflict_files="$(git diff --name-only --diff-filter=U || true)"
+            {
+              echo "SYNC_CONFLICT_FILES<<EOF"
+              echo "${conflict_files:-unknown}"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            echo "::error title=Manual upstream merge required::Conflicts while merging ${FORK_BRANCH} into ${CUSTOM_BRANCH}"
+            echo "Conflicted files:"
+            echo "${conflict_files:-unknown}"
+            echo
+            echo "Reproduce locally:"
+            echo "  git fetch --all --prune"
+            echo "  git checkout ${CUSTOM_BRANCH}"
+            echo "  git merge origin/${FORK_BRANCH}"
+            exit 1
+          fi
           git push origin "${CUSTOM_BRANCH}"
 
       - name: Notify Pushover on failure
@@ -85,7 +101,7 @@ jobs:
             --form-string "token=$PUSHOVER_APP_TOKEN" \
             --form-string "user=$PUSHOVER_USER_KEY" \
             --form-string "title=Seerr sync failed" \
-            --form-string "message=Upstream sync failed for $GITHUB_REPOSITORY. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --form-string "message=Upstream sync failed for $GITHUB_REPOSITORY. Conflicts: ${SYNC_CONFLICT_FILES:-unknown}. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             https://api.pushover.net/1/messages.json
 
   pushover-test:
