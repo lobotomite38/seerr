@@ -7,6 +7,10 @@ import type {
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
+import type {
+  TmdbMovieDetails,
+  TmdbTvDetails,
+} from '@server/api/themoviedb/interfaces';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -38,6 +42,75 @@ const sanitizeDisplayName = (displayName: string): string => {
     .replace(/[^a-z0-9-]/gi, '')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+};
+
+const FRESH_RELEASE_SEARCH_HOLD_MS = 72 * 60 * 60 * 1000;
+const DIGITAL_RELEASE_TYPE = 4;
+
+const parseReleaseDate = (value?: string | null): Date | null => {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isFreshPastDate = (
+  date: Date | null,
+  now: Date,
+  windowMs = FRESH_RELEASE_SEARCH_HOLD_MS
+): boolean => {
+  if (!date) {
+    return false;
+  }
+
+  const ageMs = now.getTime() - date.getTime();
+
+  return ageMs >= 0 && ageMs <= windowMs;
+};
+
+const getLatestPastDate = (dates: (Date | null)[], now: Date): Date | null => {
+  return (
+    dates
+      .filter(
+        (date): date is Date => date !== null && date.getTime() <= now.getTime()
+      )
+      .sort((left, right) => right.getTime() - left.getTime())[0] ?? null
+  );
+};
+
+export const shouldDeferFreshMovieSearch = (
+  movie: Pick<TmdbMovieDetails, 'release_date' | 'release_dates'>,
+  now = new Date()
+): boolean => {
+  const digitalRelease = getLatestPastDate(
+    (movie.release_dates?.results ?? [])
+      .flatMap((country) => country.release_dates)
+      .filter((release) => release.type === DIGITAL_RELEASE_TYPE)
+      .map((release) => parseReleaseDate(release.release_date)),
+    now
+  );
+  const fallbackRelease = parseReleaseDate(movie.release_date);
+
+  return isFreshPastDate(digitalRelease ?? fallbackRelease, now);
+};
+
+export const shouldDeferFreshSeriesSearch = (
+  series: Pick<TmdbTvDetails, 'first_air_date' | 'seasons'>,
+  requestedSeasons: number[],
+  now = new Date()
+): boolean => {
+  const requestedSeasonAirDate = getLatestPastDate(
+    (series.seasons ?? [])
+      .filter((season) => requestedSeasons.includes(season.season_number))
+      .map((season) => parseReleaseDate(season.air_date)),
+    now
+  );
+  const fallbackAirDate = parseReleaseDate(series.first_air_date);
+
+  return isFreshPastDate(requestedSeasonAirDate ?? fallbackAirDate, now);
 };
 
 @EventSubscriber()
@@ -394,8 +467,23 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           year: Number(movie.release_date.slice(0, 4)),
           monitored: true,
           tags,
-          searchNow: !radarrSettings.preventSearch,
+          searchNow:
+            !radarrSettings.preventSearch &&
+            !shouldDeferFreshMovieSearch(movie),
         };
+
+        if (!radarrMovieOptions.searchNow && !radarrSettings.preventSearch) {
+          logger.info(
+            'Deferring Radarr search for fresh movie release window',
+            {
+              label: 'Media Request',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              tmdbId: movie.id,
+              title: movie.title,
+            }
+          );
+        }
 
         // Run entity asynchronously so we don't wait for it on the UI side
         radarr
@@ -737,8 +825,27 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           tags,
           monitored: true,
           monitorNewItems: sonarrSettings.monitorNewItems,
-          searchNow: !sonarrSettings.preventSearch,
+          searchNow:
+            !sonarrSettings.preventSearch &&
+            !shouldDeferFreshSeriesSearch(
+              series,
+              entity.seasons.map((season) => season.seasonNumber)
+            ),
         };
+
+        if (!sonarrSeriesOptions.searchNow && !sonarrSettings.preventSearch) {
+          logger.info(
+            'Deferring Sonarr search for fresh series release window',
+            {
+              label: 'Media Request',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              tmdbId: series.id,
+              title: series.name,
+              seasons: sonarrSeriesOptions.seasons,
+            }
+          );
+        }
 
         // Run entity asynchronously so we don't wait for it on the UI side
         sonarr

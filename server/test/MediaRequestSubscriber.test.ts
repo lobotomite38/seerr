@@ -21,7 +21,11 @@ import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
 import type { SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
-import { MediaRequestSubscriber } from '@server/subscriber/MediaRequestSubscriber';
+import {
+  MediaRequestSubscriber,
+  shouldDeferFreshMovieSearch,
+  shouldDeferFreshSeriesSearch,
+} from '@server/subscriber/MediaRequestSubscriber';
 import { setupTestDb } from '@server/test/db';
 
 let addSeriesCalls: AddSeriesOptions[] = [];
@@ -55,6 +59,17 @@ Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
       ({
         id: 123,
         name: 'Test Show',
+        first_air_date: '2020-01-01',
+        seasons: [
+          {
+            id: 2,
+            season_number: 2,
+            air_date: '2020-01-01',
+            episode_count: 10,
+            name: 'Season 2',
+            overview: '',
+          },
+        ],
         external_ids: { tvdb_id: 456 },
         keywords: { results: [] },
       }) as unknown as TmdbTvDetails;
@@ -151,6 +166,108 @@ async function seedTvRequest({
 beforeEach(() => {
   addSeriesCalls = [];
   configureSonarr();
+});
+
+describe('fresh release search deferral', () => {
+  it('defers movie search when a digital release is inside the freshness window', () => {
+    const shouldDefer = shouldDeferFreshMovieSearch(
+      {
+        release_date: '2026-05-28',
+        release_dates: {
+          results: [
+            {
+              iso_3166_1: 'US',
+              rating: '',
+              release_dates: [
+                {
+                  certification: '',
+                  release_date: '2026-06-16T00:00:00.000Z',
+                  type: 4,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      new Date('2026-06-18T00:00:00.000Z')
+    );
+
+    assert.equal(shouldDefer, true);
+  });
+
+  it('does not defer movie search when the latest release signal is old', () => {
+    const shouldDefer = shouldDeferFreshMovieSearch(
+      {
+        release_date: '2026-05-01',
+        release_dates: {
+          results: [],
+        },
+      },
+      new Date('2026-06-18T00:00:00.000Z')
+    );
+
+    assert.equal(shouldDefer, false);
+  });
+
+  it('defers series search when a requested season aired inside the freshness window', () => {
+    const shouldDefer = shouldDeferFreshSeriesSearch(
+      {
+        first_air_date: '2020-01-01',
+        seasons: [
+          {
+            id: 1,
+            season_number: 1,
+            air_date: '2020-01-01',
+            episode_count: 10,
+            name: 'Season 1',
+            overview: '',
+          },
+          {
+            id: 2,
+            season_number: 2,
+            air_date: '2026-06-17',
+            episode_count: 10,
+            name: 'Season 2',
+            overview: '',
+          },
+        ],
+      },
+      [2],
+      new Date('2026-06-18T00:00:00.000Z')
+    );
+
+    assert.equal(shouldDefer, true);
+  });
+
+  it('does not defer series search when only unrequested seasons are fresh', () => {
+    const shouldDefer = shouldDeferFreshSeriesSearch(
+      {
+        first_air_date: '2020-01-01',
+        seasons: [
+          {
+            id: 1,
+            season_number: 1,
+            air_date: '2020-01-01',
+            episode_count: 10,
+            name: 'Season 1',
+            overview: '',
+          },
+          {
+            id: 2,
+            season_number: 2,
+            air_date: '2026-06-17',
+            episode_count: 10,
+            name: 'Season 2',
+            overview: '',
+          },
+        ],
+      },
+      [1],
+      new Date('2026-06-18T00:00:00.000Z')
+    );
+
+    assert.equal(shouldDefer, false);
+  });
 });
 
 describe('MediaRequestSubscriber.sendToSonarr', () => {
