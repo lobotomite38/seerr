@@ -37,6 +37,7 @@ export class QuotaRestrictedError extends Error {}
 export class DuplicateMediaRequestError extends Error {}
 export class NoSeasonsAvailableError extends Error {}
 export class BlocklistedMediaError extends Error {}
+export class OppositeQualityAvailableError extends Error {}
 
 type MediaRequestOptions = {
   isAutoRequest?: boolean;
@@ -169,6 +170,19 @@ export class MediaRequest {
         });
 
         throw new BlocklistedMediaError('This media is blocklisted.');
+      }
+
+      if (
+        user.id !== 1 &&
+        requestBody.mediaType === MediaType.MOVIE &&
+        media[requestBody.is4k ? 'status' : 'status4k'] ===
+          MediaStatus.AVAILABLE
+      ) {
+        throw new OppositeQualityAvailableError(
+          `This has already been downloaded in ${
+            requestBody.is4k ? '1080p' : '4K'
+          }.`
+        );
       }
 
       if (
@@ -422,6 +436,23 @@ export class MediaRequest {
           : (requestBody.seasons as number[]);
       if (!settings.main.enableSpecialEpisodes) {
         requestedSeasons = requestedSeasons.filter((sn) => sn > 0);
+      }
+
+      if (user.id !== 1 && media.seasons) {
+        const hasOppositeQualityAvailableSeason = media.seasons.some(
+          (season) =>
+            requestedSeasons.includes(season.seasonNumber) &&
+            season[requestBody.is4k ? 'status' : 'status4k'] ===
+              MediaStatus.AVAILABLE
+        );
+
+        if (hasOppositeQualityAvailableSeason) {
+          throw new OppositeQualityAvailableError(
+            `This has already been downloaded in ${
+              requestBody.is4k ? '1080p' : '4K'
+            }.`
+          );
+        }
       }
 
       let existingSeasons: number[] = [];

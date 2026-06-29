@@ -12,6 +12,7 @@ import {
   DuplicateMediaRequestError,
   MediaRequest,
   NoSeasonsAvailableError,
+  OppositeQualityAvailableError,
   QuotaRestrictedError,
   RequestPermissionError,
 } from '@server/entity/MediaRequest';
@@ -323,6 +324,7 @@ requestRoutes.post<never, MediaRequest, MediaRequestBody>(
         case QuotaRestrictedError:
           return next({ status: 403, message: error.message });
         case DuplicateMediaRequestError:
+        case OppositeQualityAvailableError:
           return next({ status: 409, message: error.message });
         case NoSeasonsAvailableError:
           return next({ status: 202, message: error.message });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it, mock } from 'node:test';
 
+import TheMovieDb from '@server/api/themoviedb';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -9,7 +10,10 @@ import {
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import Season from '@server/entity/Season';
+import type SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
@@ -25,6 +29,52 @@ const sendNotificationMock = mock.method(
   'sendNotification',
   async () => undefined
 ).mock;
+
+Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+  get() {
+    return async ({ movieId }: { movieId: number }) => ({
+      id: movieId,
+      external_ids: {},
+      keywords: { keywords: [] },
+      genres: [],
+      original_language: 'en',
+    });
+  },
+  set() {},
+  configurable: true,
+});
+
+Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+  get() {
+    return async ({ tvId }: { tvId: number }) => ({
+      id: tvId,
+      external_ids: { tvdb_id: tvId + 1000 },
+      keywords: { results: [] },
+      genres: [],
+      original_language: 'en',
+      seasons: [
+        {
+          id: 1,
+          season_number: 1,
+          air_date: '2020-01-01',
+          episode_count: 10,
+          name: 'Season 1',
+          overview: '',
+        },
+        {
+          id: 2,
+          season_number: 2,
+          air_date: '2021-01-01',
+          episode_count: 10,
+          name: 'Season 2',
+          overview: '',
+        },
+      ],
+    });
+  },
+  set() {},
+  configurable: true,
+});
 
 let app: Express;
 
@@ -116,6 +166,243 @@ async function seedRequest(status = MediaRequestStatus.PENDING) {
     relations: { requestedBy: true, modifiedBy: true },
   });
 }
+
+async function grantFriendRequestPermissions() {
+  const userRepo = getRepository(User);
+  const friend = await userRepo.findOneOrFail({
+    where: { email: 'friend@seerr.dev' },
+  });
+
+  friend.permissions =
+    Permission.REQUEST |
+    Permission.REQUEST_MOVIE |
+    Permission.REQUEST_TV |
+    Permission.REQUEST_4K |
+    Permission.REQUEST_4K_MOVIE |
+    Permission.REQUEST_4K_TV;
+
+  await userRepo.save(friend);
+}
+
+async function seedMovieMedia({
+  tmdbId,
+  status = MediaStatus.UNKNOWN,
+  status4k = MediaStatus.UNKNOWN,
+}: {
+  tmdbId: number;
+  status?: MediaStatus;
+  status4k?: MediaStatus;
+}) {
+  return getRepository(Media).save(
+    new Media({
+      mediaType: MediaType.MOVIE,
+      tmdbId,
+      status,
+      status4k,
+    })
+  );
+}
+
+async function seedTvMedia({
+  tmdbId,
+  seasons,
+}: {
+  tmdbId: number;
+  seasons: Season[];
+}) {
+  return getRepository(Media).save(
+    new Media({
+      mediaType: MediaType.TV,
+      tmdbId,
+      tvdbId: tmdbId + 1000,
+      status: MediaStatus.PARTIALLY_AVAILABLE,
+      status4k: MediaStatus.UNKNOWN,
+      seasons,
+    })
+  );
+}
+
+describe('POST /request opposite quality availability block', () => {
+  it('blocks a non-owner movie 4K request when 1080p is available', async () => {
+    await grantFriendRequestPermissions();
+    await seedMovieMedia({
+      tmdbId: 70001,
+      status: MediaStatus.AVAILABLE,
+      status4k: MediaStatus.UNKNOWN,
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70001,
+      is4k: true,
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(
+      res.body.message,
+      'This has already been downloaded in 1080p.'
+    );
+  });
+
+  it('blocks a non-owner movie 1080p request when 4K is available', async () => {
+    await grantFriendRequestPermissions();
+    await seedMovieMedia({
+      tmdbId: 70002,
+      status: MediaStatus.UNKNOWN,
+      status4k: MediaStatus.AVAILABLE,
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70002,
+      is4k: false,
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(
+      res.body.message,
+      'This has already been downloaded in 4K.'
+    );
+  });
+
+  it('allows owner user id 1 to create an opposite-quality movie request', async () => {
+    const media = await seedMovieMedia({
+      tmdbId: 70003,
+      status: MediaStatus.AVAILABLE,
+      status4k: MediaStatus.UNKNOWN,
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70003,
+      is4k: true,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.is4k, true);
+
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
+    assert.strictEqual(updated.status4k, MediaStatus.PROCESSING);
+  });
+
+  it('does not let another admin bypass by submitting on behalf of owner user id 1', async () => {
+    const userRepo = getRepository(User);
+    const otherAdmin = new User();
+    otherAdmin.plexId = 2;
+    otherAdmin.plexToken = '1234';
+    otherAdmin.plexUsername = 'other-admin';
+    otherAdmin.username = 'other-admin';
+    otherAdmin.email = 'other-admin@seerr.dev';
+    otherAdmin.avatar = 'https://example.com/avatar.png';
+    otherAdmin.password =
+      '$2b$12$Z5V2P5HZgmx4/AnWFMZN1.aD5AM1NucNi.mhNTSQ9oVtmdzu7Le/a';
+    otherAdmin.permissions = Permission.ADMIN;
+    await userRepo.save(otherAdmin);
+
+    await seedMovieMedia({
+      tmdbId: 70004,
+      status: MediaStatus.AVAILABLE,
+      status4k: MediaStatus.UNKNOWN,
+    });
+
+    const agent = await loginAs('other-admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70004,
+      is4k: true,
+      userId: 1,
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(
+      res.body.message,
+      'This has already been downloaded in 1080p.'
+    );
+  });
+
+  it('allows pending opposite-quality movie requests when opposite quality is not available', async () => {
+    await grantFriendRequestPermissions();
+    const media = await seedMovieMedia({
+      tmdbId: 70005,
+      status: MediaStatus.PENDING,
+      status4k: MediaStatus.UNKNOWN,
+    });
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70005,
+      is4k: true,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.is4k, true);
+  });
+
+  it('blocks TV requests only when a selected season is available in the opposite quality', async () => {
+    await grantFriendRequestPermissions();
+    await seedTvMedia({
+      tmdbId: 70006,
+      seasons: [
+        new Season({
+          seasonNumber: 1,
+          status: MediaStatus.AVAILABLE,
+          status4k: MediaStatus.UNKNOWN,
+        }),
+        new Season({
+          seasonNumber: 2,
+          status: MediaStatus.UNKNOWN,
+          status4k: MediaStatus.UNKNOWN,
+        }),
+      ],
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const allowed = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 70006,
+      is4k: true,
+      seasons: [2],
+    });
+
+    assert.strictEqual(allowed.status, 201);
+    assert.deepStrictEqual(
+      allowed.body.seasons.map((season: SeasonRequest) => season.seasonNumber),
+      [2]
+    );
+
+    const blocked = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 70006,
+      is4k: true,
+      seasons: [1],
+    });
+
+    assert.strictEqual(blocked.status, 409);
+    assert.strictEqual(
+      blocked.body.message,
+      'This has already been downloaded in 1080p.'
+    );
+  });
+});
 
 describe('DELETE /request/:requestId', () => {
   it('allows the owner to delete their own pending request', async () => {

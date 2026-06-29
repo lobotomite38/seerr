@@ -58,9 +58,8 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  pendingOppositeResolutionTitle: 'Already Requested in {existingResolution}',
-  pendingOppositeResolutionMessage:
-    '{seasonCount, plural, one {{seasonList} was} other {{seasonList} were}} already requested in {existingResolution}, but {seasonCount, plural, one {it has} other {they have}} not been found yet. Do you also want to request {seasonCount, plural, one {it} other {them}} in {requestedResolution} once {seasonCount, plural, one {it becomes} other {they become}} available?',
+  blockedOppositeResolutionMessage:
+    'This has already been downloaded in {existingResolution}.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -105,6 +104,7 @@ const TvRequestModal = ({
   ] = useState(false);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
+  const isOwnerAccount = user?.id === 1;
   const [searchModal, setSearchModal] = useState<{
     show: boolean;
   }>({
@@ -276,40 +276,6 @@ const TvRequestModal = ({
       }),
     [data?.mediaInfo?.seasons, is4k, seasonsToRequest]
   );
-  const oppositeResolutionPendingSeasons = useMemo(
-    () =>
-      seasonsToRequest.filter((seasonNumber) => {
-        const hasOppositeResolutionRequest = (data?.mediaInfo?.requests ?? [])
-          .filter(
-            (request) =>
-              request.is4k !== is4k &&
-              request.status !== MediaRequestStatus.DECLINED &&
-              request.status !== MediaRequestStatus.COMPLETED
-          )
-          .some((request) =>
-            request.seasons.some(
-              (season) => season.seasonNumber === seasonNumber
-            )
-          );
-
-        if (!hasOppositeResolutionRequest) {
-          return false;
-        }
-
-        const season = data?.mediaInfo?.seasons?.find(
-          (mediaSeason) => mediaSeason.seasonNumber === seasonNumber
-        );
-
-        return season?.[is4k ? 'status' : 'status4k'] !== MediaStatus.AVAILABLE;
-      }),
-    [
-      data?.mediaInfo?.requests,
-      data?.mediaInfo?.seasons,
-      is4k,
-      seasonsToRequest,
-    ]
-  );
-
   const formatSeasonList = useCallback(
     (seasonNumbers: number[]) =>
       seasonNumbers
@@ -434,8 +400,7 @@ const TvRequestModal = ({
 
   const handleRequest = useCallback(() => {
     if (
-      (oppositeResolutionPendingSeasons.length > 0 ||
-        oppositeResolutionAvailableSeasons.length > 0) &&
+      oppositeResolutionAvailableSeasons.length > 0 &&
       !showOppositeResolutionWarning
     ) {
       setShowOppositeResolutionWarning(true);
@@ -447,7 +412,6 @@ const TvRequestModal = ({
     setConfirmOppositeResolutionRequest(false);
     void sendRequest();
   }, [
-    oppositeResolutionPendingSeasons.length,
     oppositeResolutionAvailableSeasons.length,
     sendRequest,
     showOppositeResolutionWarning,
@@ -925,6 +889,12 @@ const TvRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
           }}
           onOk={() => {
+            if (!isOwnerAccount) {
+              setShowOppositeResolutionWarning(false);
+              setConfirmOppositeResolutionRequest(false);
+              return;
+            }
+
             if (!confirmOppositeResolutionRequest) {
               setConfirmOppositeResolutionRequest(true);
               return;
@@ -935,38 +905,34 @@ const TvRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(
-            oppositeResolutionPendingSeasons.length > 0
-              ? messages.pendingOppositeResolutionTitle
-              : messages.confirmOppositeResolutionTitle,
-            {
-              existingResolution: getResolutionLabel(!is4k),
-            }
-          )}
+          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+            existingResolution: getResolutionLabel(!is4k),
+          })}
           subTitle={data?.name}
           okText={
-            confirmOppositeResolutionRequest
-              ? intl.formatMessage(messages.imSure)
-              : intl.formatMessage(messages.requestAnyway)
+            !isOwnerAccount
+              ? intl.formatMessage(globalMessages.close)
+              : confirmOppositeResolutionRequest
+                ? intl.formatMessage(messages.imSure)
+                : intl.formatMessage(messages.requestAnyway)
           }
-          okButtonType="danger"
-          cancelText={intl.formatMessage(globalMessages.cancel)}
+          okButtonType={isOwnerAccount ? 'danger' : 'primary'}
+          cancelText={
+            isOwnerAccount
+              ? intl.formatMessage(globalMessages.cancel)
+              : undefined
+          }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
           <p className="text-sm text-gray-300">
             {intl.formatMessage(
-              oppositeResolutionPendingSeasons.length > 0
-                ? messages.pendingOppositeResolutionMessage
-                : messages.confirmOppositeResolutionMessage,
+              isOwnerAccount
+                ? messages.confirmOppositeResolutionMessage
+                : messages.blockedOppositeResolutionMessage,
               {
-                seasonCount:
-                  oppositeResolutionPendingSeasons.length > 0
-                    ? oppositeResolutionPendingSeasons.length
-                    : oppositeResolutionAvailableSeasons.length,
+                seasonCount: oppositeResolutionAvailableSeasons.length,
                 seasonList: formatSeasonList(
-                  oppositeResolutionPendingSeasons.length > 0
-                    ? oppositeResolutionPendingSeasons
-                    : oppositeResolutionAvailableSeasons
+                  oppositeResolutionAvailableSeasons
                 ),
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),

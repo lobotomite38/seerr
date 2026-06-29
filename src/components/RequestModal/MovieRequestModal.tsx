@@ -7,7 +7,7 @@ import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
@@ -39,9 +39,8 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  pendingOppositeResolutionTitle: 'Already Requested in {existingResolution}',
-  pendingOppositeResolutionMessage:
-    'This title was already requested in {existingResolution}, but it has not been found yet. Do you also want to request it in {requestedResolution} once it becomes available?',
+  blockedOppositeResolutionMessage:
+    'This has already been downloaded in {existingResolution}.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -104,13 +103,7 @@ const MovieRequestModal = ({
 
   const hasOppositeResolutionAvailable =
     data?.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
-  const hasPendingOppositeResolutionRequest =
-    (data?.mediaInfo?.requests ?? []).some(
-      (request) =>
-        request.is4k !== is4k &&
-        request.status !== MediaRequestStatus.DECLINED &&
-        request.status !== MediaRequestStatus.COMPLETED
-    ) && !hasOppositeResolutionAvailable;
+  const isOwner = user?.id === 1;
 
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
@@ -186,10 +179,7 @@ const MovieRequestModal = ({
   ]);
 
   const handleRequest = useCallback(() => {
-    if (
-      (hasPendingOppositeResolutionRequest || hasOppositeResolutionAvailable) &&
-      !showOppositeResolutionWarning
-    ) {
+    if (hasOppositeResolutionAvailable && !showOppositeResolutionWarning) {
       setShowOppositeResolutionWarning(true);
       setConfirmOppositeResolutionRequest(false);
       return;
@@ -199,7 +189,6 @@ const MovieRequestModal = ({
     setConfirmOppositeResolutionRequest(false);
     void sendRequest();
   }, [
-    hasPendingOppositeResolutionRequest,
     hasOppositeResolutionAvailable,
     sendRequest,
     showOppositeResolutionWarning,
@@ -442,6 +431,12 @@ const MovieRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
           }}
           onOk={() => {
+            if (!isOwner) {
+              setShowOppositeResolutionWarning(false);
+              setConfirmOppositeResolutionRequest(false);
+              return;
+            }
+
             if (!confirmOppositeResolutionRequest) {
               setConfirmOppositeResolutionRequest(true);
               return;
@@ -452,29 +447,28 @@ const MovieRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(
-            hasPendingOppositeResolutionRequest
-              ? messages.pendingOppositeResolutionTitle
-              : messages.confirmOppositeResolutionTitle,
-            {
-              existingResolution: getResolutionLabel(!is4k),
-            }
-          )}
+          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+            existingResolution: getResolutionLabel(!is4k),
+          })}
           subTitle={data?.title}
           okText={
-            confirmOppositeResolutionRequest
-              ? intl.formatMessage(messages.imSure)
-              : intl.formatMessage(messages.requestAnyway)
+            !isOwner
+              ? intl.formatMessage(globalMessages.close)
+              : confirmOppositeResolutionRequest
+                ? intl.formatMessage(messages.imSure)
+                : intl.formatMessage(messages.requestAnyway)
           }
-          okButtonType="danger"
-          cancelText={intl.formatMessage(globalMessages.cancel)}
+          okButtonType={isOwner ? 'danger' : 'primary'}
+          cancelText={
+            isOwner ? intl.formatMessage(globalMessages.cancel) : undefined
+          }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
           <p className="text-sm text-gray-300">
             {intl.formatMessage(
-              hasPendingOppositeResolutionRequest
-                ? messages.pendingOppositeResolutionMessage
-                : messages.confirmOppositeResolutionMessage,
+              isOwner
+                ? messages.confirmOppositeResolutionMessage
+                : messages.blockedOppositeResolutionMessage,
               {
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
