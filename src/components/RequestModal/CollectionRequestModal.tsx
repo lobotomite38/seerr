@@ -33,8 +33,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
   blockedOppositeResolutionMessage:
-    'This has already been downloaded in {existingResolution}.',
+    '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}, so {count, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -610,10 +611,14 @@ const CollectionRequestModal = ({
       {showOppositeResolutionWarning && (
         <Modal
           backgroundClickable
-          onCancel={() => {
-            setShowOppositeResolutionWarning(false);
-            setConfirmOppositeResolutionRequest(false);
-          }}
+          onCancel={
+            isOwner
+              ? () => {
+                  setShowOppositeResolutionWarning(false);
+                  setConfirmOppositeResolutionRequest(false);
+                }
+              : undefined
+          }
           onOk={() => {
             if (!isOwner) {
               setShowOppositeResolutionWarning(false);
@@ -631,10 +636,14 @@ const CollectionRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
-          subTitle={data?.name}
+          title={
+            isOwner
+              ? intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })
+              : undefined
+          }
+          subTitle={isOwner ? data?.name : undefined}
           okText={
             !isOwner
               ? intl.formatMessage(globalMessages.close)
@@ -648,19 +657,32 @@ const CollectionRequestModal = ({
           }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
-          <p className="text-sm text-gray-300">
-            {intl.formatMessage(
-              isOwner
-                ? messages.confirmOppositeResolutionMessage
-                : messages.blockedOppositeResolutionMessage,
-              {
+          {isOwner ? (
+            <p className="text-sm text-gray-300">
+              {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
                 count: oppositeResolutionAvailableParts.length,
                 titles: formatPartTitles(oppositeResolutionAvailableParts),
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
-              }
-            )}
-          </p>
+              })}
+            </p>
+          ) : (
+            <div className="mx-auto max-w-xl py-2 text-center">
+              <h3 className="text-overseerr text-2xl font-bold">
+                {intl.formatMessage(messages.blockedOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })}
+              </h3>
+              <p className="mt-3 text-base text-gray-200">
+                {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
+                  count: oppositeResolutionAvailableParts.length,
+                  titles: formatPartTitles(oppositeResolutionAvailableParts),
+                  existingResolution: getResolutionLabel(!is4k),
+                  requestedResolution: getResolutionLabel(is4k),
+                })}
+              </p>
+            </div>
+          )}
         </Modal>
       )}
     </>

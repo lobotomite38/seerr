@@ -58,8 +58,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
   blockedOppositeResolutionMessage:
-    'This has already been downloaded in {existingResolution}.',
+    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}, so {seasonCount, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -884,10 +885,14 @@ const TvRequestModal = ({
       {showOppositeResolutionWarning && (
         <Modal
           backgroundClickable
-          onCancel={() => {
-            setShowOppositeResolutionWarning(false);
-            setConfirmOppositeResolutionRequest(false);
-          }}
+          onCancel={
+            isOwnerAccount
+              ? () => {
+                  setShowOppositeResolutionWarning(false);
+                  setConfirmOppositeResolutionRequest(false);
+                }
+              : undefined
+          }
           onOk={() => {
             if (!isOwnerAccount) {
               setShowOppositeResolutionWarning(false);
@@ -905,10 +910,14 @@ const TvRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
-          subTitle={data?.name}
+          title={
+            isOwnerAccount
+              ? intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })
+              : undefined
+          }
+          subTitle={isOwnerAccount ? data?.name : undefined}
           okText={
             !isOwnerAccount
               ? intl.formatMessage(globalMessages.close)
@@ -924,21 +933,36 @@ const TvRequestModal = ({
           }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
-          <p className="text-sm text-gray-300">
-            {intl.formatMessage(
-              isOwnerAccount
-                ? messages.confirmOppositeResolutionMessage
-                : messages.blockedOppositeResolutionMessage,
-              {
+          {isOwnerAccount ? (
+            <p className="text-sm text-gray-300">
+              {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
                 seasonCount: oppositeResolutionAvailableSeasons.length,
                 seasonList: formatSeasonList(
                   oppositeResolutionAvailableSeasons
                 ),
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
-              }
-            )}
-          </p>
+              })}
+            </p>
+          ) : (
+            <div className="mx-auto max-w-xl py-2 text-center">
+              <h3 className="text-overseerr text-2xl font-bold">
+                {intl.formatMessage(messages.blockedOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })}
+              </h3>
+              <p className="mt-3 text-base text-gray-200">
+                {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
+                  seasonCount: oppositeResolutionAvailableSeasons.length,
+                  seasonList: formatSeasonList(
+                    oppositeResolutionAvailableSeasons
+                  ),
+                  existingResolution: getResolutionLabel(!is4k),
+                  requestedResolution: getResolutionLabel(is4k),
+                })}
+              </p>
+            </div>
+          )}
         </Modal>
       )}
     </>

@@ -39,8 +39,9 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
+  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
   blockedOppositeResolutionMessage:
-    'This has already been downloaded in {existingResolution}.',
+    '{title} is already available in {existingResolution}, so it cannot be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -426,10 +427,14 @@ const MovieRequestModal = ({
       {showOppositeResolutionWarning && (
         <Modal
           backgroundClickable
-          onCancel={() => {
-            setShowOppositeResolutionWarning(false);
-            setConfirmOppositeResolutionRequest(false);
-          }}
+          onCancel={
+            isOwner
+              ? () => {
+                  setShowOppositeResolutionWarning(false);
+                  setConfirmOppositeResolutionRequest(false);
+                }
+              : undefined
+          }
           onOk={() => {
             if (!isOwner) {
               setShowOppositeResolutionWarning(false);
@@ -447,10 +452,14 @@ const MovieRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
             void sendRequest();
           }}
-          title={intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-            existingResolution: getResolutionLabel(!is4k),
-          })}
-          subTitle={data?.title}
+          title={
+            isOwner
+              ? intl.formatMessage(messages.confirmOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })
+              : undefined
+          }
+          subTitle={isOwner ? data?.title : undefined}
           okText={
             !isOwner
               ? intl.formatMessage(globalMessages.close)
@@ -464,17 +473,29 @@ const MovieRequestModal = ({
           }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
-          <p className="text-sm text-gray-300">
-            {intl.formatMessage(
-              isOwner
-                ? messages.confirmOppositeResolutionMessage
-                : messages.blockedOppositeResolutionMessage,
-              {
+          {isOwner ? (
+            <p className="text-sm text-gray-300">
+              {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
-              }
-            )}
-          </p>
+              })}
+            </p>
+          ) : (
+            <div className="mx-auto max-w-xl py-2 text-center">
+              <h3 className="text-overseerr text-2xl font-bold">
+                {intl.formatMessage(messages.blockedOppositeResolutionTitle, {
+                  existingResolution: getResolutionLabel(!is4k),
+                })}
+              </h3>
+              <p className="mt-3 text-base text-gray-200">
+                {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
+                  title: data?.title,
+                  existingResolution: getResolutionLabel(!is4k),
+                  requestedResolution: getResolutionLabel(is4k),
+                })}
+              </p>
+            </div>
+          )}
         </Modal>
       )}
     </>
