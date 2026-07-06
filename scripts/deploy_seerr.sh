@@ -47,6 +47,52 @@ log() {
   echo "$(date '+%F %T') [${trigger}] $*" | tee -a "$LOG_FILE"
 }
 
+notify_deploy_failure() {
+  local exit_code="$1"
+  local line_no="$2"
+  local commit="${head_commit:-unknown}"
+  local branch="${current_branch:-unknown}"
+
+  /usr/bin/python3 - "$exit_code" "$line_no" "$trigger" "$commit" "$branch" "$LOG_FILE" <<'PY'
+import sys
+
+sys.path.insert(0, "/mnt/mpathae/lobotomite/scripts")
+
+from arr_manual_watchdog import send_pushover
+
+exit_code, line_no, trigger, commit, branch, log_file = sys.argv[1:7]
+message = (
+    f"Nightly Seerr deploy failed.\n"
+    f"Trigger: {trigger}\n"
+    f"Commit: {commit}\n"
+    f"Branch: {branch}\n"
+    f"Exit: {exit_code} at line {line_no}\n"
+    f"Log: {log_file}"
+)
+send_pushover("Seerr deploy failed", message, priority=1)
+PY
+}
+
+on_deploy_exit() {
+  local exit_code=$?
+  local line_no="${1:-unknown}"
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    return
+  fi
+
+  trap - EXIT
+  log "Deploy failed with exit code $exit_code at line $line_no; sending Pushover if configured."
+  if notify_deploy_failure "$exit_code" "$line_no" >>"$LOG_FILE" 2>&1; then
+    log "Deploy failure Pushover notification completed."
+  else
+    log "Deploy failure Pushover notification failed; see log output above."
+  fi
+  exit "$exit_code"
+}
+
+trap 'on_deploy_exit "$LINENO"' EXIT
+
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   log "Another Seerr deploy is already running; skipping."
