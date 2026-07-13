@@ -20,3 +20,11 @@ export enum MediaStatus {
   BLOCKLISTED,
   DELETED,
 }
+
+export const isOppositeQualityRequestConflict = (
+  status: MediaStatus | undefined
+): boolean =>
+  status === MediaStatus.PENDING ||
+  status === MediaStatus.PROCESSING ||
+  status === MediaStatus.PARTIALLY_AVAILABLE ||
+  status === MediaStatus.AVAILABLE;

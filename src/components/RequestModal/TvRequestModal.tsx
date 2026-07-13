@@ -11,7 +11,11 @@ import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import {
+  isOppositeQualityRequestConflict,
+  MediaRequestStatus,
+  MediaStatus,
+} from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type SeasonRequest from '@server/entity/SeasonRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
@@ -58,9 +62,10 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
+  blockedOppositeResolutionTitle:
+    'Already requested or available in {existingResolution}',
   blockedOppositeResolutionMessage:
-    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}, so {seasonCount, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
+    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already requested or available in {existingResolution}, so {seasonCount, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -273,7 +278,9 @@ const TvRequestModal = ({
           (mediaSeason) => mediaSeason.seasonNumber === seasonNumber
         );
 
-        return season?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
+        return isOppositeQualityRequestConflict(
+          season?.[is4k ? 'status' : 'status4k']
+        );
       }),
     [data?.mediaInfo?.seasons, is4k, seasonsToRequest]
   );

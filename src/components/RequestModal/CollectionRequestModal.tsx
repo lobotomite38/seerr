@@ -9,7 +9,11 @@ import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import {
+  isOppositeQualityRequestConflict,
+  MediaRequestStatus,
+  MediaStatus,
+} from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
@@ -33,9 +37,10 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
+  blockedOppositeResolutionTitle:
+    'Already requested or available in {existingResolution}',
   blockedOppositeResolutionMessage:
-    '{count, plural, one {{titles} is} other {{titles} are}} already available in {existingResolution}, so {count, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
+    '{count, plural, one {{titles} is} other {{titles} are}} already requested or available in {existingResolution}, so {count, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -213,7 +218,9 @@ const CollectionRequestModal = ({
   const oppositeResolutionAvailableParts = (data?.parts ?? []).filter(
     (part) =>
       selectedParts.includes(part.id) &&
-      part.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE
+      isOppositeQualityRequestConflict(
+        part.mediaInfo?.[is4k ? 'status' : 'status4k']
+      )
   );
 
   const formatPartTitles = useCallback(

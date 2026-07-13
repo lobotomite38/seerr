@@ -7,7 +7,10 @@ import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { MediaStatus } from '@server/constants/media';
+import {
+  isOppositeQualityRequestConflict,
+  MediaStatus,
+} from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
@@ -39,9 +42,10 @@ const messages = defineMessages('components.RequestModal', {
   confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
   confirmOppositeResolutionMessage:
     'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  blockedOppositeResolutionTitle: 'Already downloaded in {existingResolution}',
+  blockedOppositeResolutionTitle:
+    'Already requested or available in {existingResolution}',
   blockedOppositeResolutionMessage:
-    '{title} is already available in {existingResolution}, so it cannot be requested in {requestedResolution} from this account.',
+    '{title} is already requested or available in {existingResolution}, so it cannot be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -102,8 +106,9 @@ const MovieRequestModal = ({
     [intl]
   );
 
-  const hasOppositeResolutionAvailable =
-    data?.mediaInfo?.[is4k ? 'status' : 'status4k'] === MediaStatus.AVAILABLE;
+  const hasOppositeResolutionAvailable = isOppositeQualityRequestConflict(
+    data?.mediaInfo?.[is4k ? 'status' : 'status4k']
+  );
   const isOwner = user?.id === 1;
 
   const sendRequest = useCallback(async () => {

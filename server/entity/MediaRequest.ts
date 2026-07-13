@@ -2,6 +2,7 @@ import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
 import {
+  isOppositeQualityRequestConflict,
   MediaRequestStatus,
   MediaStatus,
   MediaType,
@@ -175,11 +176,12 @@ export class MediaRequest {
       if (
         user.id !== 1 &&
         requestBody.mediaType === MediaType.MOVIE &&
-        media[requestBody.is4k ? 'status' : 'status4k'] ===
-          MediaStatus.AVAILABLE
+        isOppositeQualityRequestConflict(
+          media[requestBody.is4k ? 'status' : 'status4k']
+        )
       ) {
         throw new OppositeQualityAvailableError(
-          `This has already been downloaded in ${
+          `This has already been requested or is available in ${
             requestBody.is4k ? '1080p' : '4K'
           }.`
         );
@@ -442,13 +444,14 @@ export class MediaRequest {
         const hasOppositeQualityAvailableSeason = media.seasons.some(
           (season) =>
             requestedSeasons.includes(season.seasonNumber) &&
-            season[requestBody.is4k ? 'status' : 'status4k'] ===
-              MediaStatus.AVAILABLE
+            isOppositeQualityRequestConflict(
+              season[requestBody.is4k ? 'status' : 'status4k']
+            )
         );
 
         if (hasOppositeQualityAvailableSeason) {
           throw new OppositeQualityAvailableError(
-            `This has already been downloaded in ${
+            `This has already been requested or is available in ${
               requestBody.is4k ? '1080p' : '4K'
             }.`
           );

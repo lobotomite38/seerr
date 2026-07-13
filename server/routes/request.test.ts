@@ -222,50 +222,92 @@ async function seedTvMedia({
   );
 }
 
-describe('POST /request opposite quality availability block', () => {
-  it('blocks a non-owner movie 4K request when 1080p is available', async () => {
-    await grantFriendRequestPermissions();
-    await seedMovieMedia({
-      tmdbId: 70001,
-      status: MediaStatus.AVAILABLE,
-      status4k: MediaStatus.UNKNOWN,
+describe('POST /request opposite quality request block', () => {
+  const blockedStatuses = [
+    MediaStatus.PENDING,
+    MediaStatus.PROCESSING,
+    MediaStatus.PARTIALLY_AVAILABLE,
+    MediaStatus.AVAILABLE,
+  ];
+
+  for (const [index, oppositeStatus] of blockedStatuses.entries()) {
+    it(`blocks a non-owner movie 4K request when 1080p status is ${MediaStatus[oppositeStatus]}`, async () => {
+      await grantFriendRequestPermissions();
+      const tmdbId = 70010 + index;
+      await seedMovieMedia({
+        tmdbId,
+        status: oppositeStatus,
+        status4k: MediaStatus.UNKNOWN,
+      });
+
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: tmdbId,
+        is4k: true,
+      });
+
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(
+        res.body.message,
+        'This has already been requested or is available in 1080p.'
+      );
     });
 
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
-    const res = await agent.post('/request').send({
-      mediaType: MediaType.MOVIE,
-      mediaId: 70001,
-      is4k: true,
+    it(`blocks a non-owner movie 1080p request when 4K status is ${MediaStatus[oppositeStatus]}`, async () => {
+      await grantFriendRequestPermissions();
+      const tmdbId = 70020 + index;
+      await seedMovieMedia({
+        tmdbId,
+        status: MediaStatus.UNKNOWN,
+        status4k: oppositeStatus,
+      });
+
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: tmdbId,
+        is4k: false,
+      });
+
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(
+        res.body.message,
+        'This has already been requested or is available in 4K.'
+      );
     });
+  }
 
-    assert.strictEqual(res.status, 409);
-    assert.strictEqual(
-      res.body.message,
-      'This has already been downloaded in 1080p.'
-    );
-  });
+  for (const [index, oppositeStatus] of [
+    MediaStatus.UNKNOWN,
+    MediaStatus.DELETED,
+  ].entries()) {
+    it(`allows both request directions when the opposite status is ${MediaStatus[oppositeStatus]}`, async () => {
+      await grantFriendRequestPermissions();
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const request4kId = 70030 + index * 2;
+      const request1080pId = request4kId + 1;
+      await seedMovieMedia({ tmdbId: request4kId, status: oppositeStatus });
+      await seedMovieMedia({
+        tmdbId: request1080pId,
+        status4k: oppositeStatus,
+      });
 
-  it('blocks a non-owner movie 1080p request when 4K is available', async () => {
-    await grantFriendRequestPermissions();
-    await seedMovieMedia({
-      tmdbId: 70002,
-      status: MediaStatus.UNKNOWN,
-      status4k: MediaStatus.AVAILABLE,
+      const request4k = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: request4kId,
+        is4k: true,
+      });
+      const request1080p = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: request1080pId,
+        is4k: false,
+      });
+
+      assert.strictEqual(request4k.status, 201);
+      assert.strictEqual(request1080p.status, 201);
     });
-
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
-    const res = await agent.post('/request').send({
-      mediaType: MediaType.MOVIE,
-      mediaId: 70002,
-      is4k: false,
-    });
-
-    assert.strictEqual(res.status, 409);
-    assert.strictEqual(
-      res.body.message,
-      'This has already been downloaded in 4K.'
-    );
-  });
+  }
 
   it('allows owner user id 1 to create an opposite-quality movie request', async () => {
     const media = await seedMovieMedia({
@@ -322,39 +364,8 @@ describe('POST /request opposite quality availability block', () => {
     assert.strictEqual(res.status, 409);
     assert.strictEqual(
       res.body.message,
-      'This has already been downloaded in 1080p.'
+      'This has already been requested or is available in 1080p.'
     );
-  });
-
-  it('allows pending opposite-quality movie requests when opposite quality is not available', async () => {
-    await grantFriendRequestPermissions();
-    const media = await seedMovieMedia({
-      tmdbId: 70005,
-      status: MediaStatus.PENDING,
-      status4k: MediaStatus.UNKNOWN,
-    });
-    const requestedBy = await getRepository(User).findOneOrFail({
-      where: { email: 'friend@seerr.dev' },
-    });
-    await getRepository(MediaRequest).save(
-      new MediaRequest({
-        type: MediaType.MOVIE,
-        status: MediaRequestStatus.PENDING,
-        media,
-        requestedBy,
-        is4k: false,
-      })
-    );
-
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
-    const res = await agent.post('/request').send({
-      mediaType: MediaType.MOVIE,
-      mediaId: 70005,
-      is4k: true,
-    });
-
-    assert.strictEqual(res.status, 201);
-    assert.strictEqual(res.body.is4k, true);
   });
 
   it('blocks TV requests only when a selected season is available in the opposite quality', async () => {
@@ -399,7 +410,7 @@ describe('POST /request opposite quality availability block', () => {
     assert.strictEqual(blocked.status, 409);
     assert.strictEqual(
       blocked.body.message,
-      'This has already been downloaded in 1080p.'
+      'This has already been requested or is available in 1080p.'
     );
   });
 });
