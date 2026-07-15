@@ -1,0 +1,276 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import SonarrAPI, {
+  type AddSeriesOptions,
+  type SonarrSeason,
+  type SonarrSeries,
+} from './sonarr';
+
+interface MockEpisode {
+  id: number;
+  seasonNumber: number;
+  monitored: boolean;
+  hasFile: boolean;
+}
+
+interface RequestBody extends Record<string, unknown> {
+  name?: string;
+}
+
+interface MockAxios {
+  get: (
+    url: string,
+    config?: { params?: Record<string, unknown> }
+  ) => Promise<{ data: unknown }>;
+  put: (url: string, body: unknown) => Promise<{ data: unknown }>;
+  post: (url: string, body: RequestBody) => Promise<{ data: unknown }>;
+}
+
+const season = (
+  seasonNumber: number,
+  statistics?: { episodeCount: number; episodeFileCount: number }
+): SonarrSeason => ({
+  seasonNumber,
+  monitored: false,
+  statistics: statistics
+    ? {
+        ...statistics,
+        totalEpisodeCount: statistics.episodeCount,
+        sizeOnDisk: 0,
+        percentOfEpisodes:
+          statistics.episodeCount === 0
+            ? 0
+            : (statistics.episodeFileCount / statistics.episodeCount) * 100,
+      }
+    : undefined,
+});
+
+const buildSeries = (overrides: Partial<SonarrSeries> = {}): SonarrSeries =>
+  ({
+    id: 47,
+    title: 'The Bear',
+    titleSlug: 'the-bear',
+    tvdbId: 403294,
+    tags: [],
+    monitored: true,
+    seriesType: 'standard',
+    seasons: [season(4, { episodeCount: 10, episodeFileCount: 0 })],
+    ...overrides,
+  }) as SonarrSeries;
+
+const buildOptions = (
+  overrides: Partial<AddSeriesOptions> = {}
+): AddSeriesOptions => ({
+  tvdbid: 403294,
+  title: 'The Bear',
+  profileId: 8,
+  languageProfileId: 1,
+  seasons: [4],
+  seasonFolder: false,
+  rootFolderPath: '/tv/4k',
+  tags: [],
+  seriesType: 'standard',
+  monitored: true,
+  monitorNewItems: 'all',
+  searchNow: true,
+  ...overrides,
+});
+
+const configureApi = ({
+  lookupSeries,
+  createdSeries,
+  episodes = [],
+  onCommand,
+}: {
+  lookupSeries: SonarrSeries;
+  createdSeries?: SonarrSeries;
+  episodes?: MockEpisode[];
+  onCommand?: (body: RequestBody) => Promise<void>;
+}) => {
+  const api = new SonarrAPI({
+    url: 'http://sonarr.test/api/v3',
+    apiKey: 'test-key',
+  });
+  const commands: RequestBody[] = [];
+  const seriesPosts: RequestBody[] = [];
+
+  const axios: MockAxios = {
+    get: async (url) => {
+      if (url === '/series/lookup') {
+        return { data: [structuredClone(lookupSeries)] };
+      }
+      if (url === '/episode') {
+        return { data: structuredClone(episodes) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    },
+    put: async (url, body) => {
+      if (url === '/series') {
+        return { data: body };
+      }
+      if (url === '/episode/monitor') {
+        return { data: {} };
+      }
+      throw new Error(`Unexpected PUT ${url}`);
+    },
+    post: async (url, body) => {
+      if (url === '/series') {
+        seriesPosts.push(body);
+        return {
+          data:
+            createdSeries ??
+            buildSeries({
+              ...body,
+              id: 47,
+              seriesType: body.seriesType as SonarrSeries['seriesType'],
+              seasons: body.seasons as SonarrSeason[],
+            }),
+        };
+      }
+      if (url === '/command') {
+        commands.push(structuredClone(body));
+        await onCommand?.(body);
+        return { data: {} };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    },
+  };
+
+  (api as unknown as { axios: MockAxios }).axios = axios;
+
+  return { api, commands, seriesPosts };
+};
+
+describe('SonarrAPI.addSeries', () => {
+  it('adds a new series without a whole-series search and searches the requested season', async () => {
+    const lookupSeries = buildSeries({ id: undefined });
+    const { api, commands, seriesPosts } = configureApi({ lookupSeries });
+
+    await api.addSeries(buildOptions());
+
+    assert.equal(seriesPosts.length, 1);
+    assert.deepEqual(seriesPosts[0].addOptions, {
+      ignoreEpisodesWithFiles: true,
+      searchForMissingEpisodes: false,
+    });
+    assert.deepEqual(commands, [
+      { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
+    ]);
+  });
+
+  it('updates an existing series and waits for Sonarr to accept the season search', async () => {
+    let acceptCommand: (() => void) | undefined;
+    const commandAccepted = new Promise<void>((resolve) => {
+      acceptCommand = resolve;
+    });
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries(),
+      onCommand: async () => commandAccepted,
+    });
+    let settled = false;
+
+    const addPromise = api.addSeries(buildOptions()).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(settled, false);
+    assert.deepEqual(commands, [
+      { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
+    ]);
+
+    acceptCommand?.();
+    await addPromise;
+    assert.equal(settled, true);
+  });
+
+  it('keeps rapid separate season requests scoped to their own seasons', async () => {
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({
+        seasons: [
+          season(4, { episodeCount: 10, episodeFileCount: 0 }),
+          season(5, { episodeCount: 8, episodeFileCount: 0 }),
+        ],
+      }),
+    });
+
+    await Promise.all([
+      api.addSeries(buildOptions({ seasons: [4] })),
+      api.addSeries(buildOptions({ seasons: [5] })),
+    ]);
+
+    assert.deepEqual(
+      commands
+        .map((command) => command.seasonNumber)
+        .sort((left, right) => Number(left) - Number(right)),
+      [4, 5]
+    );
+    assert.ok(commands.every((command) => command.name === 'SeasonSearch'));
+  });
+
+  it('skips only definitively complete seasons and fails open on unknown statistics', async () => {
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({
+        seasons: [
+          season(3, { episodeCount: 10, episodeFileCount: 10 }),
+          season(4, { episodeCount: 10, episodeFileCount: 4 }),
+          season(5),
+          season(6, { episodeCount: 0, episodeFileCount: 0 }),
+        ],
+      }),
+    });
+
+    await api.addSeries(buildOptions({ seasons: [3, 4, 5, 6] }));
+
+    assert.deepEqual(
+      commands.map((command) => command.seasonNumber),
+      [4, 5, 6]
+    );
+  });
+
+  it('searches missing monitored anime episodes in chunks of 100', async () => {
+    const missingEpisodes = Array.from({ length: 205 }, (_, index) => ({
+      id: index + 1,
+      seasonNumber: 4,
+      monitored: true,
+      hasFile: false,
+    }));
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({ seriesType: 'anime' }),
+      episodes: [
+        ...missingEpisodes,
+        { id: 206, seasonNumber: 4, monitored: false, hasFile: false },
+        { id: 207, seasonNumber: 4, monitored: true, hasFile: true },
+        { id: 208, seasonNumber: 3, monitored: true, hasFile: false },
+      ],
+    });
+
+    await api.addSeries(buildOptions({ seriesType: 'anime' }));
+
+    assert.deepEqual(
+      commands.map((command) => (command.episodeIds as number[]).length),
+      [100, 100, 5]
+    );
+    assert.ok(commands.every((command) => command.name === 'EpisodeSearch'));
+    assert.deepEqual(
+      commands[0].episodeIds,
+      missingEpisodes.slice(0, 100).map((e) => e.id)
+    );
+  });
+
+  it('preserves searchNow=false deferral without issuing any search command', async () => {
+    const { api, commands, seriesPosts } = configureApi({
+      lookupSeries: buildSeries({ id: undefined }),
+    });
+
+    await api.addSeries(buildOptions({ searchNow: false }));
+
+    assert.equal(seriesPosts.length, 1);
+    assert.deepEqual(seriesPosts[0].addOptions, {
+      ignoreEpisodesWithFiles: true,
+      searchForMissingEpisodes: false,
+    });
+    assert.deepEqual(commands, []);
+  });
+});

@@ -247,7 +247,10 @@ class SonarrAPI extends ServarrBase<{
           }
 
           if (options.searchNow) {
-            this.searchSeries(newSeriesResponse.data.id);
+            await this.searchRequestedSeasons(
+              newSeriesResponse.data,
+              options.seasons
+            );
           }
 
           return newSeriesResponse.data;
@@ -283,7 +286,9 @@ class SonarrAPI extends ServarrBase<{
           seriesType: options.seriesType,
           addOptions: {
             ignoreEpisodesWithFiles: true,
-            searchForMissingEpisodes: options.searchNow,
+            // Sonarr's add-time search is series-wide. Requested seasons are
+            // searched explicitly after the series has been accepted instead.
+            searchForMissingEpisodes: false,
           },
         } as Partial<SonarrSeries>
       );
@@ -294,6 +299,13 @@ class SonarrAPI extends ServarrBase<{
           label: 'Sonarr',
           series: createdSeriesResponse.data,
         });
+
+        if (options.searchNow) {
+          await this.searchRequestedSeasons(
+            createdSeriesResponse.data,
+            options.seasons
+          );
+        }
       } else {
         logger.error('Failed to add series to Sonarr', {
           label: 'Sonarr',
@@ -354,6 +366,145 @@ class SonarrAPI extends ServarrBase<{
         }
       );
     }
+  }
+
+  private async searchRequestedSeasons(
+    series: SonarrSeries,
+    requestedSeasons: number[]
+  ): Promise<void> {
+    if (!series.id) {
+      return;
+    }
+
+    const seasonsToSearch = this.getSeasonsNeedingSearch(
+      requestedSeasons,
+      series.seasons
+    );
+
+    if (seasonsToSearch.length === 0) {
+      logger.debug(
+        'All requested seasons are complete; skipping Sonarr search.',
+        {
+          label: 'Sonarr API',
+          seriesId: series.id,
+          requestedSeasons,
+        }
+      );
+      return;
+    }
+
+    if (series.seriesType === 'anime') {
+      await this.searchAnimeEpisodes(series.id, seasonsToSearch);
+      return;
+    }
+
+    logger.info('Executing requested season search commands.', {
+      label: 'Sonarr API',
+      seriesId: series.id,
+      seasonNumbers: seasonsToSearch,
+    });
+
+    try {
+      for (const seasonNumber of seasonsToSearch) {
+        await this.runCommand('SeasonSearch', {
+          seriesId: series.id,
+          seasonNumber,
+        });
+      }
+    } catch (e) {
+      logger.error(
+        'Something went wrong while executing Sonarr season search.',
+        {
+          label: 'Sonarr API',
+          errorMessage: e.message,
+          seriesId: series.id,
+          seasonNumbers: seasonsToSearch,
+        }
+      );
+    }
+  }
+
+  private async searchAnimeEpisodes(
+    seriesId: number,
+    seasonNumbers: number[]
+  ): Promise<void> {
+    try {
+      const episodes = await this.getEpisodes(seriesId);
+      const episodeIds = Array.from(
+        new Set(
+          episodes
+            .filter(
+              (episode) =>
+                seasonNumbers.includes(episode.seasonNumber) &&
+                episode.monitored &&
+                !episode.hasFile
+            )
+            .map((episode) => episode.id)
+        )
+      );
+
+      if (episodeIds.length === 0) {
+        logger.debug(
+          'No missing monitored anime episodes found; skipping Sonarr search.',
+          {
+            label: 'Sonarr API',
+            seriesId,
+            seasonNumbers,
+          }
+        );
+        return;
+      }
+
+      logger.info('Executing requested anime episode search commands.', {
+        label: 'Sonarr API',
+        seriesId,
+        seasonNumbers,
+        episodeCount: episodeIds.length,
+      });
+
+      for (let index = 0; index < episodeIds.length; index += 100) {
+        await this.runCommand('EpisodeSearch', {
+          episodeIds: episodeIds.slice(index, index + 100),
+        });
+      }
+    } catch (e) {
+      logger.error(
+        'Something went wrong while executing Sonarr anime episode search.',
+        {
+          label: 'Sonarr API',
+          errorMessage: e.message,
+          seriesId,
+          seasonNumbers,
+        }
+      );
+    }
+  }
+
+  private getSeasonsNeedingSearch(
+    requestedSeasons: number[],
+    seriesSeasons?: SonarrSeason[]
+  ): number[] {
+    const uniqueSeasonNumbers = Array.from(new Set(requestedSeasons)).filter(
+      (seasonNumber) => Number.isInteger(seasonNumber) && seasonNumber >= 0
+    );
+
+    if (!seriesSeasons) {
+      return uniqueSeasonNumbers;
+    }
+
+    return uniqueSeasonNumbers.filter((seasonNumber) => {
+      const statistics = seriesSeasons.find(
+        (season) => season.seasonNumber === seasonNumber
+      )?.statistics;
+
+      // A positive episode count with at least that many files is the only
+      // definitive complete signal. Missing/empty statistics fail open.
+      return !(
+        statistics &&
+        statistics.episodeCount > 0 &&
+        statistics.episodeFileCount >= statistics.episodeCount
+      );
+    });
   }
 
   public async getEpisodes(seriesId: number): Promise<EpisodeResult[]> {
