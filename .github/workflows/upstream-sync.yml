@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       pushover_test:
-        description: 'Send a Pushover test notification (no sync).'
+        description: 'Test the Sonarr adapter review alert (no sync).'
         required: false
         default: 'false'
 
@@ -52,6 +52,37 @@ jobs:
           git fetch --no-tags upstream "${UPSTREAM_BRANCH}" --prune
           git fetch --no-tags origin "${FORK_BRANCH}" "${CUSTOM_BRANCH}" --prune
 
+      - name: Detect upstream Sonarr adapter changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_ref="origin/${FORK_BRANCH}"
+          upstream_ref="upstream/${UPSTREAM_BRANCH}"
+
+          if git diff --quiet "${previous_ref}..${upstream_ref}" -- server/api/servarr/sonarr.ts; then
+            echo "UPSTREAM_SONARR_ADAPTER_CHANGED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          previous_sha="$(git rev-parse --short=12 "$previous_ref")"
+          upstream_sha="$(git rev-parse --short=12 "$upstream_ref")"
+          adapter_commits="$(
+            git log \
+              --format='%h %s' \
+              --max-count=5 \
+              "${previous_ref}..${upstream_ref}" \
+              -- server/api/servarr/sonarr.ts
+          )"
+
+          {
+            echo "UPSTREAM_SONARR_ADAPTER_CHANGED=true"
+            echo "UPSTREAM_SONARR_PREVIOUS_SHA=$previous_sha"
+            echo "UPSTREAM_SONARR_NEW_SHA=$upstream_sha"
+            echo "UPSTREAM_SONARR_ADAPTER_COMMITS<<EOF"
+            echo "${adapter_commits:-No Sonarr adapter commit summary available.}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Fast-forward fork develop from upstream
         shell: bash
         run: |
@@ -84,6 +115,42 @@ jobs:
             exit 1
           fi
           git push origin "${CUSTOM_BRANCH}"
+
+      - name: Notify Pushover for upstream Sonarr adapter change
+        if: ${{ success() && env.UPSTREAM_SONARR_ADAPTER_CHANGED == 'true' }}
+        env:
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$PUSHOVER_USER_KEY" ] || [ -z "$PUSHOVER_APP_TOKEN" ]; then
+            echo "Pushover secrets not set; skipping Sonarr adapter review notification."
+            exit 0
+          fi
+
+          commit_summary="${UPSTREAM_SONARR_ADAPTER_COMMITS:0:200}"
+          message="$(cat <<EOF
+          Why: This fork has a local season-scoped Sonarr fix that prevents rapid TV-season requests from launching duplicate whole-series searches. Upstream changed the same adapter and merged cleanly, so the implementations may now overlap.
+
+          What to do:
+          1. Do not deploy the updated branch yet.
+          2. Ask Codex to compare the upstream Sonarr changes with our local fix.
+          3. Keep one implementation and retain the Sonarr regression tests.
+          4. Run the targeted test, server typecheck, lint, and build before deployment.
+
+          Range: ${UPSTREAM_SONARR_PREVIOUS_SHA}..${UPSTREAM_SONARR_NEW_SHA}
+          Commits: ${commit_summary:-unavailable}
+          Details: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+          )"
+
+          curl --fail-with-body -sS \
+            --form-string "token=$PUSHOVER_APP_TOKEN" \
+            --form-string "user=$PUSHOVER_USER_KEY" \
+            --form-string "title=Seerr Sonarr review required" \
+            --form-string "message=$message" \
+            --form-string "priority=1" \
+            https://api.pushover.net/1/messages.json
 
       - name: Notify Pushover on failure
         if: failure()
@@ -120,9 +187,18 @@ jobs:
             exit 1
           fi
 
+          message="$(cat <<EOF
+          TEST ONLY - no action is required now.
+
+          A real alert means upstream Seerr changed the Sonarr adapter that overlaps our local season-scoped fix for duplicate whole-series searches.
+
+          When real: do not deploy; ask Codex to reconcile the upstream and local implementations, keep the regression tests, and run the targeted test, server typecheck, lint, and build before deployment.
+          EOF
+          )"
+
           curl --fail-with-body -sS \
             --form-string "token=$PUSHOVER_APP_TOKEN" \
             --form-string "user=$PUSHOVER_USER_KEY" \
-            --form-string "title=Seerr sync test" \
-            --form-string "message=This is a test Pushover notification for $GITHUB_REPOSITORY." \
+            --form-string "title=Seerr Sonarr review test" \
+            --form-string "message=$message" \
             https://api.pushover.net/1/messages.json
