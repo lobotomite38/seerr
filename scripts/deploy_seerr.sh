@@ -69,7 +69,7 @@ message = (
     f"Exit: {exit_code} at line {line_no}\n"
     f"Log: {log_file}"
 )
-send_pushover("Seerr deploy failed", message, priority=1)
+send_pushover("Seerr deploy failed", message, priority=1, app="SEERR")
 PY
 }
 
