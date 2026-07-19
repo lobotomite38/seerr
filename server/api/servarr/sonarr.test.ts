@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 
+import { Notification } from '@server/lib/notifications';
+import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import SonarrAPI, {
   type AddSeriesOptions,
   type SonarrSeason,
@@ -199,6 +201,59 @@ describe('SonarrAPI.addSeries', () => {
     assert.deepEqual(commands, [
       { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
     ]);
+  });
+
+  it('alerts through Pushover when a new series refresh times out', async () => {
+    const lookupSeries = buildSeries({ id: undefined });
+    const unrefreshedSeries = buildSeries({
+      title: 'Friends',
+      seasons: [season(1)],
+    });
+    const { api } = configureApi({
+      lookupSeries,
+      createdSeries: unrefreshedSeries,
+      refreshedSeries: unrefreshedSeries,
+    });
+    const shouldSend = mock.method(
+      PushoverAgent.prototype,
+      'shouldSend',
+      () => true
+    );
+    const send = mock.method(PushoverAgent.prototype, 'send', async () => true);
+
+    try {
+      await (
+        api as unknown as {
+          waitForNewSeriesRefresh: (
+            series: SonarrSeries,
+            seasonNumbers: number[],
+            attempts: number,
+            intervalMs: number
+          ) => Promise<SonarrSeries>;
+        }
+      ).waitForNewSeriesRefresh(unrefreshedSeries, [1], 1, 0);
+
+      assert.equal(shouldSend.mock.callCount(), 1);
+      assert.equal(send.mock.callCount(), 1);
+      assert.equal(
+        send.mock.calls[0].arguments[0],
+        Notification.TEST_NOTIFICATION
+      );
+      assert.deepEqual(send.mock.calls[0].arguments[1], {
+        event: 'Seerr Sonarr search review required',
+        subject: 'Friends',
+        message:
+          'Sonarr did not populate the requested season within 10 seconds. Seerr attempted the season-scoped search fail-open. Verify the Sonarr command history and that the title enters the download queue.',
+        extra: [
+          { name: 'Series ID', value: '47' },
+          { name: 'Seasons', value: '1' },
+        ],
+        notifySystem: true,
+        notifyAdmin: false,
+      });
+    } finally {
+      mock.restoreAll();
+    }
   });
 
   it('updates an existing series and waits for Sonarr to accept the season search', async () => {

@@ -1,3 +1,5 @@
+import { Notification } from '@server/lib/notifications';
+import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import logger from '@server/logger';
 import ServarrBase from './base';
 
@@ -430,7 +432,9 @@ class SonarrAPI extends ServarrBase<{
 
   private async waitForNewSeriesRefresh(
     series: SonarrSeries,
-    requestedSeasons: number[]
+    requestedSeasons: number[],
+    attempts = NEW_SERIES_REFRESH_ATTEMPTS,
+    intervalMs = NEW_SERIES_REFRESH_INTERVAL_MS
   ): Promise<SonarrSeries> {
     if (!series.id) {
       return series;
@@ -440,7 +444,7 @@ class SonarrAPI extends ServarrBase<{
       (seasonNumber) => Number.isInteger(seasonNumber) && seasonNumber >= 0
     );
 
-    for (let attempt = 0; attempt < NEW_SERIES_REFRESH_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const refreshedSeries = await this.getSeriesById(series.id);
         const requestedSeasonsArePopulated = seasonsToWaitFor.every(
@@ -478,10 +482,8 @@ class SonarrAPI extends ServarrBase<{
         });
       }
 
-      if (attempt < NEW_SERIES_REFRESH_ATTEMPTS - 1) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, NEW_SERIES_REFRESH_INTERVAL_MS)
-        );
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }
     }
 
@@ -493,7 +495,55 @@ class SonarrAPI extends ServarrBase<{
         seasonNumbers: seasonsToWaitFor,
       }
     );
+    await this.sendNewSeriesRefreshTimeoutAlert(series, seasonsToWaitFor);
     return series;
+  }
+
+  private async sendNewSeriesRefreshTimeoutAlert(
+    series: SonarrSeries,
+    seasonNumbers: number[]
+  ): Promise<void> {
+    const pushoverAgent = new PushoverAgent();
+
+    if (!pushoverAgent.shouldSend()) {
+      logger.warn('Sonarr refresh timeout Pushover was not sent.', {
+        label: 'Sonarr API',
+        reason: 'Pushover agent is not configured or enabled',
+        seriesId: series.id,
+        seasonNumbers,
+      });
+      return;
+    }
+
+    try {
+      const sent = await pushoverAgent.send(Notification.TEST_NOTIFICATION, {
+        event: 'Seerr Sonarr search review required',
+        subject: series.title,
+        message:
+          'Sonarr did not populate the requested season within 10 seconds. Seerr attempted the season-scoped search fail-open. Verify the Sonarr command history and that the title enters the download queue.',
+        extra: [
+          { name: 'Series ID', value: String(series.id) },
+          { name: 'Seasons', value: seasonNumbers.join(', ') },
+        ],
+        notifySystem: true,
+        notifyAdmin: false,
+      });
+
+      if (!sent) {
+        logger.error('Sonarr refresh timeout Pushover failed.', {
+          label: 'Sonarr API',
+          seriesId: series.id,
+          seasonNumbers,
+        });
+      }
+    } catch (e) {
+      logger.error('Sonarr refresh timeout Pushover failed.', {
+        label: 'Sonarr API',
+        errorMessage: e.message,
+        seriesId: series.id,
+        seasonNumbers,
+      });
+    }
   }
 
   private async searchAnimeEpisodes(
