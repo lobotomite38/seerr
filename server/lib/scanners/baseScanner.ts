@@ -513,7 +513,8 @@ class BaseScanner<T> {
                   season.status === MediaStatus.AVAILABLE
               )
             ? MediaStatus.PARTIALLY_AVAILABLE
-            : (!seasons.length && media.status !== MediaStatus.DELETED) ||
+            : (is4k && media.status === MediaStatus.PROCESSING) ||
+                (!seasons.length && media.status !== MediaStatus.DELETED) ||
                 media.seasons.some(
                   (season) => season.status === MediaStatus.PROCESSING
                 )
@@ -531,7 +532,8 @@ class BaseScanner<T> {
                     season.status4k === MediaStatus.AVAILABLE
                 )
               ? MediaStatus.PARTIALLY_AVAILABLE
-              : (!seasons.length && media.status4k !== MediaStatus.DELETED) ||
+              : (!is4k && media.status4k === MediaStatus.PROCESSING) ||
+                  (!seasons.length && media.status4k !== MediaStatus.DELETED) ||
                   media.seasons.some(
                     (season) => season.status4k === MediaStatus.PROCESSING
                   )

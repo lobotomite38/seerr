@@ -979,6 +979,46 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     }
 
     if (
+      media.mediaType === MediaType.TV &&
+      entity.status === MediaRequestStatus.APPROVED
+    ) {
+      let seasonStatusChanged = false;
+
+      for (const requestedSeason of entity.seasons ?? []) {
+        let mediaSeason = media.seasons.find(
+          (season) => season.seasonNumber === requestedSeason.seasonNumber
+        );
+
+        if (!mediaSeason) {
+          mediaSeason = new Season({
+            seasonNumber: requestedSeason.seasonNumber,
+            status: entity.is4k ? MediaStatus.UNKNOWN : MediaStatus.PROCESSING,
+            status4k: entity.is4k
+              ? MediaStatus.PROCESSING
+              : MediaStatus.UNKNOWN,
+          });
+          media.seasons.push(mediaSeason);
+          seasonStatusChanged = true;
+          continue;
+        }
+
+        const seasonStatusKey = entity.is4k ? 'status4k' : 'status';
+        if (
+          mediaSeason[seasonStatusKey] !== MediaStatus.AVAILABLE &&
+          mediaSeason[seasonStatusKey] !== MediaStatus.PARTIALLY_AVAILABLE &&
+          mediaSeason[seasonStatusKey] !== MediaStatus.PROCESSING
+        ) {
+          mediaSeason[seasonStatusKey] = MediaStatus.PROCESSING;
+          seasonStatusChanged = true;
+        }
+      }
+
+      if (seasonStatusChanged) {
+        await mediaRepository.save(media);
+      }
+    }
+
+    if (
       media.mediaType === MediaType.MOVIE &&
       entity.status === MediaRequestStatus.DECLINED &&
       media[statusKey] !== MediaStatus.DELETED

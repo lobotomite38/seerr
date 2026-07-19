@@ -296,3 +296,123 @@ describe('MediaRequestSubscriber.sendToSonarr', () => {
     assert.equal(addSeriesCalls.length, 0);
   });
 });
+
+describe('MediaRequestSubscriber.updateParentStatus', () => {
+  it('creates processing 4K season state for an approved TV request', async () => {
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 789,
+        tvdbId: 987,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.PENDING,
+        seasons: [],
+      })
+    );
+    const request = new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      is4k: true,
+      seasons: [
+        new SeasonRequest({
+          seasonNumber: 1,
+          status: MediaRequestStatus.APPROVED,
+        }),
+      ],
+    });
+
+    await new MediaRequestSubscriber().updateParentStatus(request);
+
+    const updated = await mediaRepository.findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.equal(updated.status4k, MediaStatus.PROCESSING);
+    assert.equal(updated.seasons.length, 1);
+    assert.equal(updated.seasons[0].seasonNumber, 1);
+    assert.equal(updated.seasons[0].status, MediaStatus.UNKNOWN);
+    assert.equal(updated.seasons[0].status4k, MediaStatus.PROCESSING);
+  });
+
+  it('creates processing standard season state without changing available 4K state', async () => {
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 790,
+        tvdbId: 988,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.AVAILABLE,
+        seasons: [],
+      })
+    );
+    const request = new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      is4k: false,
+      seasons: [
+        new SeasonRequest({
+          seasonNumber: 2,
+          status: MediaRequestStatus.APPROVED,
+        }),
+      ],
+    });
+
+    await new MediaRequestSubscriber().updateParentStatus(request);
+
+    const updated = await mediaRepository.findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.equal(updated.status, MediaStatus.PROCESSING);
+    assert.equal(updated.status4k, MediaStatus.AVAILABLE);
+    assert.equal(updated.seasons.length, 1);
+    assert.equal(updated.seasons[0].seasonNumber, 2);
+    assert.equal(updated.seasons[0].status, MediaStatus.PROCESSING);
+    assert.equal(updated.seasons[0].status4k, MediaStatus.UNKNOWN);
+  });
+
+  it('marks an existing requested season processing without overwriting its opposite quality', async () => {
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 791,
+        tvdbId: 989,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.PENDING,
+        seasons: [
+          new Season({
+            seasonNumber: 3,
+            status: MediaStatus.AVAILABLE,
+            status4k: MediaStatus.UNKNOWN,
+          }),
+        ],
+      })
+    );
+    const request = new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      is4k: true,
+      seasons: [
+        new SeasonRequest({
+          seasonNumber: 3,
+          status: MediaRequestStatus.APPROVED,
+        }),
+      ],
+    });
+
+    await new MediaRequestSubscriber().updateParentStatus(request);
+
+    const updated = await mediaRepository.findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.equal(updated.status, MediaStatus.PARTIALLY_AVAILABLE);
+    assert.equal(updated.status4k, MediaStatus.PROCESSING);
+    assert.equal(updated.seasons.length, 1);
+    assert.equal(updated.seasons[0].status, MediaStatus.AVAILABLE);
+    assert.equal(updated.seasons[0].status4k, MediaStatus.PROCESSING);
+  });
+});
