@@ -1,6 +1,9 @@
 import logger from '@server/logger';
 import ServarrBase from './base';
 
+const NEW_SERIES_REFRESH_ATTEMPTS = 40;
+const NEW_SERIES_REFRESH_INTERVAL_MS = 250;
+
 export interface SonarrSeason {
   seasonNumber: number;
   monitored: boolean;
@@ -301,10 +304,11 @@ class SonarrAPI extends ServarrBase<{
         });
 
         if (options.searchNow) {
-          await this.searchRequestedSeasons(
+          const refreshedSeries = await this.waitForNewSeriesRefresh(
             createdSeriesResponse.data,
             options.seasons
           );
+          await this.searchRequestedSeasons(refreshedSeries, options.seasons);
         }
       } else {
         logger.error('Failed to add series to Sonarr', {
@@ -424,6 +428,74 @@ class SonarrAPI extends ServarrBase<{
     }
   }
 
+  private async waitForNewSeriesRefresh(
+    series: SonarrSeries,
+    requestedSeasons: number[]
+  ): Promise<SonarrSeries> {
+    if (!series.id) {
+      return series;
+    }
+
+    const seasonsToWaitFor = Array.from(new Set(requestedSeasons)).filter(
+      (seasonNumber) => Number.isInteger(seasonNumber) && seasonNumber >= 0
+    );
+
+    for (let attempt = 0; attempt < NEW_SERIES_REFRESH_ATTEMPTS; attempt++) {
+      try {
+        const refreshedSeries = await this.getSeriesById(series.id);
+        const requestedSeasonsArePopulated = seasonsToWaitFor.every(
+          (seasonNumber) => {
+            const statistics = refreshedSeries.seasons.find(
+              (season) => season.seasonNumber === seasonNumber
+            )?.statistics;
+
+            return Boolean(
+              statistics &&
+              (statistics.episodeCount > 0 || statistics.totalEpisodeCount > 0)
+            );
+          }
+        );
+
+        if (requestedSeasonsArePopulated) {
+          logger.debug(
+            'New Sonarr series refresh completed before requested search.',
+            {
+              label: 'Sonarr API',
+              seriesId: series.id,
+              seasonNumbers: seasonsToWaitFor,
+              attempts: attempt + 1,
+            }
+          );
+          return refreshedSeries;
+        }
+      } catch (e) {
+        logger.warn('Failed to inspect new Sonarr series refresh state.', {
+          label: 'Sonarr API',
+          errorMessage: e.message,
+          seriesId: series.id,
+          seasonNumbers: seasonsToWaitFor,
+          attempt: attempt + 1,
+        });
+      }
+
+      if (attempt < NEW_SERIES_REFRESH_ATTEMPTS - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, NEW_SERIES_REFRESH_INTERVAL_MS)
+        );
+      }
+    }
+
+    logger.warn(
+      'Timed out waiting for new Sonarr series refresh; searching requested seasons fail-open.',
+      {
+        label: 'Sonarr API',
+        seriesId: series.id,
+        seasonNumbers: seasonsToWaitFor,
+      }
+    );
+    return series;
+  }
+
   private async searchAnimeEpisodes(
     seriesId: number,
     seasonNumbers: number[]
@@ -538,7 +610,7 @@ class SonarrAPI extends ServarrBase<{
 
       return Array.isArray(response.data)
         ? response.data
-        : response.data.records ?? [];
+        : (response.data.records ?? []);
     } catch (e) {
       logger.error('Failed to retrieve Sonarr wanted/missing episodes', {
         label: 'Sonarr API',

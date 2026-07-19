@@ -80,11 +80,15 @@ const buildOptions = (
 const configureApi = ({
   lookupSeries,
   createdSeries,
+  refreshedSeries,
+  refreshedSeriesResponses,
   episodes = [],
   onCommand,
 }: {
   lookupSeries: SonarrSeries;
   createdSeries?: SonarrSeries;
+  refreshedSeries?: SonarrSeries;
+  refreshedSeriesResponses?: SonarrSeries[];
   episodes?: MockEpisode[];
   onCommand?: (body: RequestBody) => Promise<void>;
 }) => {
@@ -94,6 +98,7 @@ const configureApi = ({
   });
   const commands: RequestBody[] = [];
   const seriesPosts: RequestBody[] = [];
+  let refreshedSeriesRequestCount = 0;
 
   const axios: MockAxios = {
     get: async (url) => {
@@ -102,6 +107,18 @@ const configureApi = ({
       }
       if (url === '/episode') {
         return { data: structuredClone(episodes) };
+      }
+      if (url.startsWith('/series/')) {
+        const response = refreshedSeriesResponses
+          ? refreshedSeriesResponses[
+              Math.min(
+                refreshedSeriesRequestCount,
+                refreshedSeriesResponses.length - 1
+              )
+            ]
+          : (refreshedSeries ?? createdSeries ?? buildSeries());
+        refreshedSeriesRequestCount++;
+        return { data: structuredClone(response) };
       }
       throw new Error(`Unexpected GET ${url}`);
     },
@@ -154,6 +171,31 @@ describe('SonarrAPI.addSeries', () => {
       ignoreEpisodesWithFiles: true,
       searchForMissingEpisodes: false,
     });
+    assert.deepEqual(commands, [
+      { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
+    ]);
+  });
+
+  it('waits for a new series refresh to populate the requested season before searching', async () => {
+    const lookupSeries = buildSeries({ id: undefined });
+    const unrefreshedSeries = buildSeries({
+      seasons: [season(4)],
+    });
+    const refreshedSeries = buildSeries({
+      seasons: [season(4, { episodeCount: 10, episodeFileCount: 0 })],
+    });
+    const { api, commands } = configureApi({
+      lookupSeries,
+      createdSeries: unrefreshedSeries,
+      refreshedSeriesResponses: [unrefreshedSeries, refreshedSeries],
+    });
+
+    const addPromise = api.addSeries(buildOptions());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(commands, []);
+
+    await addPromise;
     assert.deepEqual(commands, [
       { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
     ]);
