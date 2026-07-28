@@ -326,16 +326,73 @@ describe('SonarrAPI.addSeries', () => {
     );
   });
 
-  it('searches anime by requested season so Sonarr considers season packs', async () => {
+  it('uses a fast anime series search for a new requested season pack', async () => {
+    const lookupSeries = buildSeries({
+      id: undefined,
+      seriesType: 'anime',
+    });
+    const refreshedSeries = buildSeries({
+      seriesType: 'anime',
+      seasons: [
+        {
+          ...season(4, { episodeCount: 10, episodeFileCount: 0 }),
+          monitored: true,
+        },
+      ],
+    });
+    const { api, commands } = configureApi({
+      lookupSeries,
+      createdSeries: refreshedSeries,
+      refreshedSeries,
+    });
+
+    await api.addSeries(buildOptions({ seriesType: 'anime' }));
+
+    assert.deepEqual(commands, [{ name: 'SeriesSearch', seriesId: 47 }]);
+  });
+
+  it('uses a fast anime series search when only requested seasons are incomplete', async () => {
     const { api, commands } = configureApi({
       lookupSeries: buildSeries({ seriesType: 'anime' }),
     });
 
     await api.addSeries(buildOptions({ seriesType: 'anime' }));
 
+    assert.deepEqual(commands, [{ name: 'SeriesSearch', seriesId: 47 }]);
+  });
+
+  it('keeps anime season-scoped when another monitored season is incomplete', async () => {
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({
+        seriesType: 'anime',
+        seasons: [
+          season(3, { episodeCount: 10, episodeFileCount: 0 }),
+          season(4, { episodeCount: 10, episodeFileCount: 0 }),
+        ].map((item) => ({ ...item, monitored: true })),
+      }),
+    });
+
+    await api.addSeries(buildOptions({ seriesType: 'anime', seasons: [4] }));
+
     assert.deepEqual(commands, [
       { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
     ]);
+  });
+
+  it('ignores complete monitored anime seasons when choosing fast search', async () => {
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({
+        seriesType: 'anime',
+        seasons: [
+          season(3, { episodeCount: 10, episodeFileCount: 10 }),
+          season(4, { episodeCount: 10, episodeFileCount: 0 }),
+        ].map((item) => ({ ...item, monitored: true })),
+      }),
+    });
+
+    await api.addSeries(buildOptions({ seriesType: 'anime', seasons: [4] }));
+
+    assert.deepEqual(commands, [{ name: 'SeriesSearch', seriesId: 47 }]);
   });
 
   it('preserves searchNow=false deferral without issuing any search command', async () => {

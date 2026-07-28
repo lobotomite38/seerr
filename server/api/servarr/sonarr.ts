@@ -399,6 +399,34 @@ class SonarrAPI extends ServarrBase<{
       return;
     }
 
+    if (this.canUseAnimeSeriesSearch(series, seasonsToSearch)) {
+      logger.info(
+        'Executing anime series search so Sonarr considers season packs first.',
+        {
+          label: 'Sonarr API',
+          seriesId: series.id,
+          seasonNumbers: seasonsToSearch,
+        }
+      );
+
+      try {
+        await this.runCommand('SeriesSearch', {
+          seriesId: series.id,
+        });
+      } catch (e) {
+        logger.error(
+          'Something went wrong while executing Sonarr anime series search.',
+          {
+            label: 'Sonarr API',
+            errorMessage: e.message,
+            seriesId: series.id,
+            seasonNumbers: seasonsToSearch,
+          }
+        );
+      }
+      return;
+    }
+
     logger.info('Executing requested season search commands.', {
       label: 'Sonarr API',
       seriesId: series.id,
@@ -423,6 +451,37 @@ class SonarrAPI extends ServarrBase<{
         }
       );
     }
+  }
+
+  private canUseAnimeSeriesSearch(
+    series: SonarrSeries,
+    requestedIncompleteSeasons: number[]
+  ): boolean {
+    if (series.seriesType !== 'anime') {
+      return false;
+    }
+
+    const requestedSeasonNumbers = new Set(requestedIncompleteSeasons);
+
+    // Sonarr's anime SeasonSearch fans out into slow per-episode searches,
+    // while SeriesSearch considers season packs immediately. SeriesSearch is
+    // safe only when it cannot reach another monitored, incomplete season.
+    return series.seasons.every(
+      (season) =>
+        !season.monitored ||
+        this.isSeasonDefinitivelyComplete(season) ||
+        requestedSeasonNumbers.has(season.seasonNumber)
+    );
+  }
+
+  private isSeasonDefinitivelyComplete(season?: SonarrSeason): boolean {
+    const statistics = season?.statistics;
+
+    return Boolean(
+      statistics &&
+      statistics.episodeCount > 0 &&
+      statistics.episodeFileCount >= statistics.episodeCount
+    );
   }
 
   private async waitForNewSeriesRefresh(
@@ -554,16 +613,12 @@ class SonarrAPI extends ServarrBase<{
     }
 
     return uniqueSeasonNumbers.filter((seasonNumber) => {
-      const statistics = seriesSeasons.find(
-        (season) => season.seasonNumber === seasonNumber
-      )?.statistics;
-
       // A positive episode count with at least that many files is the only
       // definitive complete signal. Missing/empty statistics fail open.
-      return !(
-        statistics &&
-        statistics.episodeCount > 0 &&
-        statistics.episodeFileCount >= statistics.episodeCount
+      return !this.isSeasonDefinitivelyComplete(
+        seriesSeasons.find(
+          (season) => season.seasonNumber === seasonNumber
+        )
       );
     });
   }
