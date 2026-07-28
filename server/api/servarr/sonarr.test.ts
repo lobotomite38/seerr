@@ -326,34 +326,16 @@ describe('SonarrAPI.addSeries', () => {
     );
   });
 
-  it('searches missing monitored anime episodes in chunks of 100', async () => {
-    const missingEpisodes = Array.from({ length: 205 }, (_, index) => ({
-      id: index + 1,
-      seasonNumber: 4,
-      monitored: true,
-      hasFile: false,
-    }));
+  it('searches anime by requested season so Sonarr considers season packs', async () => {
     const { api, commands } = configureApi({
       lookupSeries: buildSeries({ seriesType: 'anime' }),
-      episodes: [
-        ...missingEpisodes,
-        { id: 206, seasonNumber: 4, monitored: false, hasFile: false },
-        { id: 207, seasonNumber: 4, monitored: true, hasFile: true },
-        { id: 208, seasonNumber: 3, monitored: true, hasFile: false },
-      ],
     });
 
     await api.addSeries(buildOptions({ seriesType: 'anime' }));
 
-    assert.deepEqual(
-      commands.map((command) => (command.episodeIds as number[]).length),
-      [100, 100, 5]
-    );
-    assert.ok(commands.every((command) => command.name === 'EpisodeSearch'));
-    assert.deepEqual(
-      commands[0].episodeIds,
-      missingEpisodes.slice(0, 100).map((e) => e.id)
-    );
+    assert.deepEqual(commands, [
+      { name: 'SeasonSearch', seriesId: 47, seasonNumber: 4 },
+    ]);
   });
 
   it('preserves searchNow=false deferral without issuing any search command', async () => {

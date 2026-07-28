@@ -399,11 +399,6 @@ class SonarrAPI extends ServarrBase<{
       return;
     }
 
-    if (series.seriesType === 'anime') {
-      await this.searchAnimeEpisodes(series.id, seasonsToSearch);
-      return;
-    }
-
     logger.info('Executing requested season search commands.', {
       label: 'Sonarr API',
       seriesId: series.id,
@@ -543,62 +538,6 @@ class SonarrAPI extends ServarrBase<{
         seriesId: series.id,
         seasonNumbers,
       });
-    }
-  }
-
-  private async searchAnimeEpisodes(
-    seriesId: number,
-    seasonNumbers: number[]
-  ): Promise<void> {
-    try {
-      const episodes = await this.getEpisodes(seriesId);
-      const episodeIds = Array.from(
-        new Set(
-          episodes
-            .filter(
-              (episode) =>
-                seasonNumbers.includes(episode.seasonNumber) &&
-                episode.monitored &&
-                !episode.hasFile
-            )
-            .map((episode) => episode.id)
-        )
-      );
-
-      if (episodeIds.length === 0) {
-        logger.debug(
-          'No missing monitored anime episodes found; skipping Sonarr search.',
-          {
-            label: 'Sonarr API',
-            seriesId,
-            seasonNumbers,
-          }
-        );
-        return;
-      }
-
-      logger.info('Executing requested anime episode search commands.', {
-        label: 'Sonarr API',
-        seriesId,
-        seasonNumbers,
-        episodeCount: episodeIds.length,
-      });
-
-      for (let index = 0; index < episodeIds.length; index += 100) {
-        await this.runCommand('EpisodeSearch', {
-          episodeIds: episodeIds.slice(index, index + 100),
-        });
-      }
-    } catch (e) {
-      logger.error(
-        'Something went wrong while executing Sonarr anime episode search.',
-        {
-          label: 'Sonarr API',
-          errorMessage: e.message,
-          seriesId,
-          seasonNumbers,
-        }
-      );
     }
   }
 
