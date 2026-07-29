@@ -1,6 +1,7 @@
 import { Notification } from '@server/lib/notifications';
 import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import logger from '@server/logger';
+import type { AxiosResponse } from 'axios';
 import ServarrBase from './base';
 
 const NEW_SERIES_REFRESH_ATTEMPTS = 40;
@@ -173,26 +174,27 @@ class SonarrAPI extends ServarrBase<{
   }
 
   public async getSeriesByTvdbId(id: number): Promise<SonarrSeries> {
+    let response: AxiosResponse<SonarrSeries[]>;
     try {
-      const response = await this.axios.get<SonarrSeries[]>('/series/lookup', {
+      response = await this.axios.get<SonarrSeries[]>('/series/lookup', {
         params: {
           term: `tvdb:${id}`,
         },
       });
-
-      if (!response.data[0]) {
-        throw new Error('Series not found');
-      }
-
-      return response.data[0];
     } catch (e) {
       logger.error('Error retrieving series by tvdb ID', {
         label: 'Sonarr API',
         errorMessage: e.message,
         tvdbId: id,
       });
-      throw new Error('Series not found', { cause: e });
+      throw e;
     }
+
+    if (!response.data[0]) {
+      throw new Error('Series not found');
+    }
+
+    return response.data[0];
   }
 
   public async addSeries(options: AddSeriesOptions): Promise<SonarrSeries> {
@@ -616,9 +618,7 @@ class SonarrAPI extends ServarrBase<{
       // A positive episode count with at least that many files is the only
       // definitive complete signal. Missing/empty statistics fail open.
       return !this.isSeasonDefinitivelyComplete(
-        seriesSeasons.find(
-          (season) => season.seasonNumber === seasonNumber
-        )
+        seriesSeasons.find((season) => season.seasonNumber === seasonNumber)
       );
     });
   }
@@ -706,9 +706,17 @@ class SonarrAPI extends ServarrBase<{
 
     return newSeasons;
   }
-  public removeSeries = async (serieId: number): Promise<void> => {
+  public removeSeries = async (tvdbId: number): Promise<void> => {
+    const { id, title } = await this.getSeriesByTvdbId(tvdbId);
+
+    if (!id) {
+      logger.info(`[Sonarr] Series not in library, nothing to remove`, {
+        tvdbId,
+      });
+      return;
+    }
+
     try {
-      const { id, title } = await this.getSeriesByTvdbId(serieId);
       await this.axios.delete(`/series/${id}`, {
         params: {
           deleteFiles: true,
@@ -717,9 +725,13 @@ class SonarrAPI extends ServarrBase<{
       });
       logger.info(`[Sonarr] Removed series ${title}`);
     } catch (e) {
-      throw new Error(`[Sonarr] Failed to remove series: ${e.message}`, {
-        cause: e,
-      });
+      if (e?.response?.status === 404) {
+        logger.info(`[Sonarr] Series already removed from Sonarr`, {
+          tvdbId,
+        });
+        return;
+      }
+      throw e;
     }
   };
 
