@@ -2,6 +2,7 @@ import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
 import {
+  canBypassOppositeQualityRequestConflict,
   isOppositeQualityRequestConflict,
   MediaRequestStatus,
   MediaStatus,
@@ -174,7 +175,7 @@ export class MediaRequest {
       }
 
       if (
-        user.id !== 1 &&
+        !canBypassOppositeQualityRequestConflict(user.id) &&
         requestBody.mediaType === MediaType.MOVIE &&
         isOppositeQualityRequestConflict(
           media[requestBody.is4k ? 'status' : 'status4k']
@@ -440,7 +441,7 @@ export class MediaRequest {
         requestedSeasons = requestedSeasons.filter((sn) => sn > 0);
       }
 
-      if (user.id !== 1 && media.seasons) {
+      if (!canBypassOppositeQualityRequestConflict(user.id) && media.seasons) {
         const hasOppositeQualityAvailableSeason = media.seasons.some(
           (season) =>
             requestedSeasons.includes(season.seasonNumber) &&

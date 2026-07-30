@@ -12,6 +12,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import {
+  canBypassOppositeQualityRequestConflict,
   classifyOppositeQualityConflict,
   isOppositeQualityRequestConflict,
   MediaRequestStatus,
@@ -117,7 +118,9 @@ const TvRequestModal = ({
   ] = useState(false);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
-  const isOwnerAccount = user?.id === 1;
+  const canOverrideQualityConflict = canBypassOppositeQualityRequestConflict(
+    user?.id
+  );
   const [searchModal, setSearchModal] = useState<{
     show: boolean;
   }>({
@@ -949,27 +952,29 @@ const TvRequestModal = ({
             setShowOppositeResolutionWarning(false);
             setConfirmOppositeResolutionRequest(false);
           }}
-          hideCancelButton={!isOwnerAccount}
+          hideCancelButton={!canOverrideQualityConflict}
           wrapHeader
           compactBackdrop
           dialogClass="mx-3 rounded-lg sm:mx-0 sm:max-w-xl"
           buttonContainerClass={
-            isOwnerAccount ? 'flex-col-reverse sm:flex-row-reverse' : undefined
+            canOverrideQualityConflict
+              ? 'flex-col-reverse sm:flex-row-reverse'
+              : undefined
           }
           okButtonProps={{
-            className: isOwnerAccount
+            className: canOverrideQualityConflict
               ? 'ml-0 mt-2 w-full sm:ml-3 sm:mt-0 sm:w-auto'
               : 'ml-0 w-full sm:ml-3 sm:w-auto',
           }}
           cancelButtonProps={
-            isOwnerAccount
+            canOverrideQualityConflict
               ? {
                   className: 'ml-0 w-full sm:w-auto',
                 }
               : undefined
           }
           onOk={() => {
-            if (!isOwnerAccount) {
+            if (!canOverrideQualityConflict) {
               setShowOppositeResolutionWarning(false);
               setConfirmOppositeResolutionRequest(false);
               return;
@@ -992,21 +997,21 @@ const TvRequestModal = ({
           }
           subTitle={data?.name}
           okText={
-            !isOwnerAccount
+            !canOverrideQualityConflict
               ? intl.formatMessage(globalMessages.close)
               : confirmOppositeResolutionRequest
                 ? intl.formatMessage(messages.imSure)
                 : intl.formatMessage(messages.requestAnyway)
           }
-          okButtonType={isOwnerAccount ? 'danger' : 'primary'}
+          okButtonType={canOverrideQualityConflict ? 'danger' : 'primary'}
           cancelText={
-            isOwnerAccount
+            canOverrideQualityConflict
               ? intl.formatMessage(globalMessages.cancel)
               : undefined
           }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
-          {isOwnerAccount ? (
+          {canOverrideQualityConflict ? (
             <p className="text-sm text-gray-300">
               {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
                 seasonCount: oppositeResolutionAvailableSeasons.length,

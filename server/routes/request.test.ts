@@ -132,6 +132,22 @@ async function loginAs(email: string, password: string) {
   }
 }
 
+async function seedQualityOverrideUser() {
+  const user = new User();
+  user.id = 11;
+  user.plexId = 11;
+  user.plexToken = '1234';
+  user.plexUsername = 'quality-override';
+  user.username = 'quality-override';
+  user.email = 'quality-override@seerr.dev';
+  user.avatar = 'https://example.com/avatar.png';
+  user.password =
+    '$2b$12$Z5V2P5HZgmx4/AnWFMZN1.aD5AM1NucNi.mhNTSQ9oVtmdzu7Le/a';
+  user.permissions = Permission.ADMIN;
+
+  return getRepository(User).save(user);
+}
+
 async function seedRequest(status = MediaRequestStatus.PENDING) {
   const userRepo = getRepository(User);
   const mediaRepo = getRepository(Media);
@@ -331,6 +347,54 @@ describe('POST /request opposite quality request block', () => {
     });
     assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
     assert.strictEqual(updated.status4k, MediaStatus.PROCESSING);
+  });
+
+  it('allows configured user id 11 to create opposite-quality movie and TV requests', async () => {
+    await seedQualityOverrideUser();
+    const movie = await seedMovieMedia({
+      tmdbId: 70005,
+      status: MediaStatus.AVAILABLE,
+      status4k: MediaStatus.UNKNOWN,
+    });
+    await seedTvMedia({
+      tmdbId: 70007,
+      seasons: [
+        new Season({
+          seasonNumber: 1,
+          status: MediaStatus.AVAILABLE,
+          status4k: MediaStatus.UNKNOWN,
+        }),
+      ],
+    });
+
+    const agent = await loginAs('quality-override@seerr.dev', 'test1234');
+    const movieResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 70005,
+      is4k: true,
+    });
+    const tvResponse = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 70007,
+      is4k: true,
+      seasons: [1],
+    });
+
+    assert.strictEqual(movieResponse.status, 201);
+    assert.strictEqual(movieResponse.body.is4k, true);
+    assert.strictEqual(tvResponse.status, 201);
+    assert.deepStrictEqual(
+      tvResponse.body.seasons.map(
+        (season: SeasonRequest) => season.seasonNumber
+      ),
+      [1]
+    );
+
+    const updatedMovie = await getRepository(Media).findOneOrFail({
+      where: { id: movie.id },
+    });
+    assert.strictEqual(updatedMovie.status, MediaStatus.AVAILABLE);
+    assert.strictEqual(updatedMovie.status4k, MediaStatus.PROCESSING);
   });
 
   it('does not let another admin bypass by submitting on behalf of owner user id 1', async () => {

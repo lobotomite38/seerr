@@ -1,4 +1,5 @@
 import {
+  canBypassOppositeQualityRequestConflict,
   classifyOppositeQualityConflict,
   MediaStatus,
 } from '@server/constants/media';
@@ -58,5 +59,14 @@ describe('classifyOppositeQualityConflict', () => {
       ]),
       'available'
     );
+  });
+});
+
+describe('canBypassOppositeQualityRequestConflict', () => {
+  it('allows only the configured quality override accounts', () => {
+    assert.equal(canBypassOppositeQualityRequestConflict(1), true);
+    assert.equal(canBypassOppositeQualityRequestConflict(11), true);
+    assert.equal(canBypassOppositeQualityRequestConflict(2), false);
+    assert.equal(canBypassOppositeQualityRequestConflict(undefined), false);
   });
 });

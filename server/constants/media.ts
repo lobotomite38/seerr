@@ -29,6 +29,13 @@ export const isOppositeQualityRequestConflict = (
   status === MediaStatus.PARTIALLY_AVAILABLE ||
   status === MediaStatus.AVAILABLE;
 
+const OPPOSITE_QUALITY_OVERRIDE_USER_IDS = new Set([1, 11]);
+
+export const canBypassOppositeQualityRequestConflict = (
+  userId: number | undefined
+): boolean =>
+  userId !== undefined && OPPOSITE_QUALITY_OVERRIDE_USER_IDS.has(userId);
+
 export type OppositeQualityConflict =
   | 'requested'
   | 'partiallyAvailable'

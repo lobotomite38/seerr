@@ -8,6 +8,7 @@ import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import {
+  canBypassOppositeQualityRequestConflict,
   classifyOppositeQualityConflict,
   isOppositeQualityRequestConflict,
   MediaStatus,
@@ -121,10 +122,16 @@ const MovieRequestModal = ({
   const hasOppositeResolutionAvailable = isOppositeQualityRequestConflict(
     oppositeResolutionStatus
   );
-  const isOwner = user?.id === 1;
-  const isNonOwner = Boolean(user && !isOwner);
+  const canOverrideQualityConflict = canBypassOppositeQualityRequestConflict(
+    user?.id
+  );
+  const isBlockedByQualityConflict = Boolean(
+    user && !canOverrideQualityConflict
+  );
   const showImmediateOppositeResolutionWarning =
-    !editRequest && isNonOwner && Boolean(oppositeResolutionConflict);
+    !editRequest &&
+    isBlockedByQualityConflict &&
+    Boolean(oppositeResolutionConflict);
   const isOppositeResolutionWarningVisible =
     showOppositeResolutionWarning || showImmediateOppositeResolutionWarning;
 
@@ -249,10 +256,10 @@ const MovieRequestModal = ({
     setShowOppositeResolutionWarning(false);
     setConfirmOppositeResolutionRequest(false);
 
-    if (isNonOwner) {
+    if (isBlockedByQualityConflict) {
       onCancel?.();
     }
-  }, [isNonOwner, onCancel]);
+  }, [isBlockedByQualityConflict, onCancel]);
 
   const cancelRequest = async () => {
     setIsUpdating(true);
@@ -487,27 +494,29 @@ const MovieRequestModal = ({
         <Modal
           backgroundClickable
           onCancel={closeOppositeResolutionWarning}
-          hideCancelButton={!isOwner}
+          hideCancelButton={!canOverrideQualityConflict}
           wrapHeader
           compactBackdrop
           dialogClass="mx-3 rounded-lg sm:mx-0 sm:max-w-xl"
           buttonContainerClass={
-            isOwner ? 'flex-col-reverse sm:flex-row-reverse' : undefined
+            canOverrideQualityConflict
+              ? 'flex-col-reverse sm:flex-row-reverse'
+              : undefined
           }
           okButtonProps={{
-            className: isOwner
+            className: canOverrideQualityConflict
               ? 'ml-0 mt-2 w-full sm:ml-3 sm:mt-0 sm:w-auto'
               : 'ml-0 w-full sm:ml-3 sm:w-auto',
           }}
           cancelButtonProps={
-            isOwner
+            canOverrideQualityConflict
               ? {
                   className: 'ml-0 w-full sm:w-auto',
                 }
               : undefined
           }
           onOk={() => {
-            if (!isOwner) {
+            if (!canOverrideQualityConflict) {
               closeOppositeResolutionWarning();
               return;
             }
@@ -529,19 +538,21 @@ const MovieRequestModal = ({
           }
           subTitle={data?.title}
           okText={
-            !isOwner
+            !canOverrideQualityConflict
               ? intl.formatMessage(globalMessages.close)
               : confirmOppositeResolutionRequest
                 ? intl.formatMessage(messages.imSure)
                 : intl.formatMessage(messages.requestAnyway)
           }
-          okButtonType={isOwner ? 'danger' : 'primary'}
+          okButtonType={canOverrideQualityConflict ? 'danger' : 'primary'}
           cancelText={
-            isOwner ? intl.formatMessage(globalMessages.cancel) : undefined
+            canOverrideQualityConflict
+              ? intl.formatMessage(globalMessages.cancel)
+              : undefined
           }
           backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
         >
-          {isOwner ? (
+          {canOverrideQualityConflict ? (
             <p className="text-sm text-gray-300">
               {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
                 title: data?.title,
