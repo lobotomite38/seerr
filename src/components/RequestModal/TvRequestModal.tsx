@@ -925,6 +925,12 @@ const TvRequestModal = ({
           onCancel={() => setShowSingleSeasonWarning(false)}
           onOk={() => setShowSingleSeasonWarning(false)}
           hideCancelButton
+          wrapHeader
+          compactBackdrop
+          dialogClass="mx-3 rounded-lg sm:mx-0 sm:max-w-xl"
+          okButtonProps={{
+            className: 'ml-0 w-full sm:ml-3 sm:w-auto',
+          }}
           title={intl.formatMessage(messages.singleSeasonOnlyTitle)}
           subTitle={data?.name}
           okText={intl.formatMessage(globalMessages.close)}
@@ -944,6 +950,24 @@ const TvRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
           }}
           hideCancelButton={!isOwnerAccount}
+          wrapHeader
+          compactBackdrop
+          dialogClass="mx-3 rounded-lg sm:mx-0 sm:max-w-xl"
+          buttonContainerClass={
+            isOwnerAccount ? 'flex-col-reverse sm:flex-row-reverse' : undefined
+          }
+          okButtonProps={{
+            className: isOwnerAccount
+              ? 'ml-0 mt-2 w-full sm:ml-3 sm:mt-0 sm:w-auto'
+              : 'ml-0 w-full sm:ml-3 sm:w-auto',
+          }}
+          cancelButtonProps={
+            isOwnerAccount
+              ? {
+                  className: 'ml-0 w-full sm:w-auto',
+                }
+              : undefined
+          }
           onOk={() => {
             if (!isOwnerAccount) {
               setShowOppositeResolutionWarning(false);

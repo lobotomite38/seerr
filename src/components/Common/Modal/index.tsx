@@ -10,6 +10,7 @@ import type { MouseEvent } from 'react';
 import React, { Fragment, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useIntl } from 'react-intl';
+import { twMerge } from 'tailwind-merge';
 
 interface ModalProps {
   title?: string;
@@ -38,8 +39,11 @@ interface ModalProps {
   backgroundClickable?: boolean;
   loading?: boolean;
   backdrop?: string;
+  compactBackdrop?: boolean;
+  wrapHeader?: boolean;
   children?: React.ReactNode;
   dialogClass?: string;
+  buttonContainerClass?: string;
 }
 
 const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
@@ -68,7 +72,10 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       loading = false,
       onTertiary,
       backdrop,
+      compactBackdrop = false,
+      wrapHeader = false,
       dialogClass,
+      buttonContainerClass,
       okButtonProps,
       cancelButtonProps,
       secondaryButtonProps,
@@ -149,21 +156,28 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               <div
                 className="absolute inset-0"
                 style={{
-                  backgroundImage:
-                    'linear-gradient(180deg, rgba(31, 41, 55, 0.75) 0%, rgba(31, 41, 55, 1) 100%)',
+                  backgroundImage: compactBackdrop
+                    ? 'linear-gradient(180deg, rgba(31, 41, 55, 0.9) 0%, rgba(31, 41, 55, 1) 100%)'
+                    : 'linear-gradient(180deg, rgba(31, 41, 55, 0.75) 0%, rgba(31, 41, 55, 1) 100%)',
                 }}
               />
             </div>
           )}
           <div className="relative -mx-4 overflow-x-hidden px-4 pt-0.5 sm:flex sm:items-center">
             <div
-              className={`mt-3 truncate text-center text-white sm:mt-0 sm:text-left`}
+              className={
+                wrapHeader
+                  ? 'mt-3 w-full text-left text-white sm:mt-0'
+                  : 'mt-3 truncate text-center text-white sm:mt-0 sm:text-left'
+              }
             >
               {(title || subTitle) && (
                 <div className="flex flex-col space-y-1">
                   {title && (
                     <span
-                      className="text-overseerr truncate pb-0.5 text-2xl font-bold leading-6"
+                      className={`text-overseerr pb-0.5 text-2xl font-bold leading-6 ${
+                        wrapHeader ? 'break-words' : 'truncate'
+                      }`}
                       id="modal-headline"
                       data-testid="modal-title"
                     >
@@ -172,7 +186,9 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                   )}
                   {subTitle && (
                     <span
-                      className="truncate text-lg font-semibold leading-6 text-gray-200"
+                      className={`text-lg font-semibold leading-6 text-gray-200 ${
+                        wrapHeader ? 'break-words' : 'truncate'
+                      }`}
                       id="modal-headline"
                       data-testid="modal-title"
                     >
@@ -193,7 +209,12 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
             </div>
           )}
           {(onCancel || onOk || onSecondary || onTertiary) && (
-            <div className="relative mt-5 flex flex-row-reverse justify-center sm:mt-4 sm:justify-start">
+            <div
+              className={twMerge(
+                'relative mt-5 flex flex-row-reverse justify-center sm:mt-4 sm:justify-start',
+                buttonContainerClass
+              )}
+            >
               {typeof onOk === 'function' && (
                 <Button
                   buttonType={okButtonType}

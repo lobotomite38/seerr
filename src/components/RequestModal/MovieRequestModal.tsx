@@ -477,6 +477,24 @@ const MovieRequestModal = ({
             setConfirmOppositeResolutionRequest(false);
           }}
           hideCancelButton={!isOwner}
+          wrapHeader
+          compactBackdrop
+          dialogClass="mx-3 rounded-lg sm:mx-0 sm:max-w-xl"
+          buttonContainerClass={
+            isOwner ? 'flex-col-reverse sm:flex-row-reverse' : undefined
+          }
+          okButtonProps={{
+            className: isOwner
+              ? 'ml-0 mt-2 w-full sm:ml-3 sm:mt-0 sm:w-auto'
+              : 'ml-0 w-full sm:ml-3 sm:w-auto',
+          }}
+          cancelButtonProps={
+            isOwner
+              ? {
+                  className: 'ml-0 w-full sm:w-auto',
+                }
+              : undefined
+          }
           onOk={() => {
             if (!isOwner) {
               setShowOppositeResolutionWarning(false);
