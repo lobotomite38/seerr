@@ -19,6 +19,7 @@ interface ModalProps {
   onSecondary?: (e?: MouseEvent<HTMLButtonElement>) => void;
   onTertiary?: (e?: MouseEvent<HTMLButtonElement>) => void;
   cancelText?: string;
+  hideCancelButton?: boolean;
   okText?: string;
   secondaryText?: string;
   tertiaryText?: string;
@@ -49,6 +50,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       onCancel,
       onOk,
       cancelText,
+      hideCancelButton = false,
       okText,
       okDisabled = false,
       cancelButtonType = 'default',
@@ -227,7 +229,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                   {tertiaryText}
                 </Button>
               )}
-              {typeof onCancel === 'function' && (
+              {typeof onCancel === 'function' && !hideCancelButton && (
                 <Button
                   buttonType={cancelButtonType}
                   onClick={onCancel}

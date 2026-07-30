@@ -8,8 +8,10 @@ import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import {
+  classifyOppositeQualityConflict,
   isOppositeQualityRequestConflict,
   MediaStatus,
+  type OppositeQualityConflict,
 } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
@@ -39,13 +41,18 @@ const messages = defineMessages('components.RequestModal', {
   requestApproved: 'Request for <strong>{title}</strong> approved!',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
-  confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
+  oppositeRequestedTitle: 'Already Requested',
+  oppositePartiallyAvailableTitle: 'Partially Available',
+  oppositeAvailableTitle: 'Already Available',
+  oppositeMixedTitle: 'Already Requested or Available',
+  oppositeRequestedDescription: 'already requested',
+  oppositePartiallyAvailableDescription: 'partially available',
+  oppositeAvailableDescription: 'already available',
+  oppositeMixedDescription: 'already requested or available',
   confirmOppositeResolutionMessage:
-    'This title is already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  blockedOppositeResolutionTitle:
-    'Already requested or available in {existingResolution}',
+    '{title} is {conflictDescription} in {existingResolution}. Do you also want to request {requestedResolution}?',
   blockedOppositeResolutionMessage:
-    '{title} is already requested or available in {existingResolution}, so it cannot be requested in {requestedResolution} from this account.',
+    '{title} is {conflictDescription} in {existingResolution}, so it cannot be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -106,10 +113,43 @@ const MovieRequestModal = ({
     [intl]
   );
 
+  const oppositeResolutionStatus =
+    data?.mediaInfo?.[is4k ? 'status' : 'status4k'];
+  const oppositeResolutionConflict = classifyOppositeQualityConflict([
+    oppositeResolutionStatus,
+  ]);
   const hasOppositeResolutionAvailable = isOppositeQualityRequestConflict(
-    data?.mediaInfo?.[is4k ? 'status' : 'status4k']
+    oppositeResolutionStatus
   );
   const isOwner = user?.id === 1;
+
+  const getConflictTitle = useCallback(
+    (conflict: OppositeQualityConflict) =>
+      intl.formatMessage(
+        conflict === 'requested'
+          ? messages.oppositeRequestedTitle
+          : conflict === 'partiallyAvailable'
+            ? messages.oppositePartiallyAvailableTitle
+            : conflict === 'available'
+              ? messages.oppositeAvailableTitle
+              : messages.oppositeMixedTitle
+      ),
+    [intl]
+  );
+
+  const getConflictDescription = useCallback(
+    (conflict: OppositeQualityConflict) =>
+      intl.formatMessage(
+        conflict === 'requested'
+          ? messages.oppositeRequestedDescription
+          : conflict === 'partiallyAvailable'
+            ? messages.oppositePartiallyAvailableDescription
+            : conflict === 'available'
+              ? messages.oppositeAvailableDescription
+              : messages.oppositeMixedDescription
+      ),
+    [intl]
+  );
 
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
@@ -432,14 +472,11 @@ const MovieRequestModal = ({
       {showOppositeResolutionWarning && (
         <Modal
           backgroundClickable
-          onCancel={
-            isOwner
-              ? () => {
-                  setShowOppositeResolutionWarning(false);
-                  setConfirmOppositeResolutionRequest(false);
-                }
-              : undefined
-          }
+          onCancel={() => {
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+          }}
+          hideCancelButton={!isOwner}
           onOk={() => {
             if (!isOwner) {
               setShowOppositeResolutionWarning(false);
@@ -458,13 +495,11 @@ const MovieRequestModal = ({
             void sendRequest();
           }}
           title={
-            isOwner
-              ? intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-                  existingResolution: getResolutionLabel(!is4k),
-                })
+            oppositeResolutionConflict
+              ? getConflictTitle(oppositeResolutionConflict)
               : undefined
           }
-          subTitle={isOwner ? data?.title : undefined}
+          subTitle={data?.title}
           okText={
             !isOwner
               ? intl.formatMessage(globalMessages.close)
@@ -481,25 +516,25 @@ const MovieRequestModal = ({
           {isOwner ? (
             <p className="text-sm text-gray-300">
               {intl.formatMessage(messages.confirmOppositeResolutionMessage, {
+                title: data?.title,
+                conflictDescription: oppositeResolutionConflict
+                  ? getConflictDescription(oppositeResolutionConflict)
+                  : '',
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
               })}
             </p>
           ) : (
-            <div className="mx-auto max-w-xl py-2 text-center">
-              <h3 className="text-overseerr text-2xl font-bold">
-                {intl.formatMessage(messages.blockedOppositeResolutionTitle, {
-                  existingResolution: getResolutionLabel(!is4k),
-                })}
-              </h3>
-              <p className="mt-3 text-base text-gray-200">
-                {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
-                  title: data?.title,
-                  existingResolution: getResolutionLabel(!is4k),
-                  requestedResolution: getResolutionLabel(is4k),
-                })}
-              </p>
-            </div>
+            <p className="text-sm text-gray-300">
+              {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
+                title: data?.title,
+                conflictDescription: oppositeResolutionConflict
+                  ? getConflictDescription(oppositeResolutionConflict)
+                  : '',
+                existingResolution: getResolutionLabel(!is4k),
+                requestedResolution: getResolutionLabel(is4k),
+              })}
+            </p>
           )}
         </Modal>
       )}

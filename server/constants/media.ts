@@ -28,3 +28,31 @@ export const isOppositeQualityRequestConflict = (
   status === MediaStatus.PROCESSING ||
   status === MediaStatus.PARTIALLY_AVAILABLE ||
   status === MediaStatus.AVAILABLE;
+
+export type OppositeQualityConflict =
+  | 'requested'
+  | 'partiallyAvailable'
+  | 'available'
+  | 'mixed';
+
+export const classifyOppositeQualityConflict = (
+  statuses: (MediaStatus | undefined)[]
+): OppositeQualityConflict | undefined => {
+  const conflicts = new Set<Exclude<OppositeQualityConflict, 'mixed'>>();
+
+  for (const status of statuses) {
+    if (status === MediaStatus.PENDING || status === MediaStatus.PROCESSING) {
+      conflicts.add('requested');
+    } else if (status === MediaStatus.PARTIALLY_AVAILABLE) {
+      conflicts.add('partiallyAvailable');
+    } else if (status === MediaStatus.AVAILABLE) {
+      conflicts.add('available');
+    }
+  }
+
+  if (conflicts.size > 1) {
+    return 'mixed';
+  }
+
+  return conflicts.values().next().value;
+};

@@ -12,9 +12,11 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import {
+  classifyOppositeQualityConflict,
   isOppositeQualityRequestConflict,
   MediaRequestStatus,
   MediaStatus,
+  type OppositeQualityConflict,
 } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type SeasonRequest from '@server/entity/SeasonRequest';
@@ -59,13 +61,18 @@ const messages = defineMessages('components.RequestModal', {
   singleSeasonOnlyTitle: 'One Season at a Time',
   singleSeasonOnlyMessage:
     'Please request one season at a time. Older downloads are deleted automatically as storage space runs low',
-  confirmOppositeResolutionTitle: 'Already Available in {existingResolution}',
+  oppositeRequestedTitle: 'Already Requested',
+  oppositePartiallyAvailableTitle: 'Partially Available',
+  oppositeAvailableTitle: 'Already Available',
+  oppositeMixedTitle: 'Already Requested or Available',
+  oppositeRequestedDescription: 'already requested',
+  oppositePartiallyAvailableDescription: 'partially available',
+  oppositeAvailableDescription: 'already available',
+  oppositeMixedDescription: 'already requested or available',
   confirmOppositeResolutionMessage:
-    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already available in {existingResolution}. Do you also want to request {requestedResolution}?',
-  blockedOppositeResolutionTitle:
-    'Already requested or available in {existingResolution}',
+    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} {conflictDescription} in {existingResolution}. Do you also want to request {requestedResolution}?',
   blockedOppositeResolutionMessage:
-    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} already requested or available in {existingResolution}, so {seasonCount, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
+    '{seasonCount, plural, one {{seasonList} is} other {{seasonList} are}} {conflictDescription} in {existingResolution}, so {seasonCount, plural, one {it cannot} other {they cannot}} be requested in {requestedResolution} from this account.',
   requestAnyway: 'Request Anyway',
   imSure: "I'm Sure",
   standardResolution: '1080p',
@@ -284,6 +291,19 @@ const TvRequestModal = ({
       }),
     [data?.mediaInfo?.seasons, is4k, seasonsToRequest]
   );
+  const oppositeResolutionConflict = useMemo(
+    () =>
+      classifyOppositeQualityConflict(
+        oppositeResolutionAvailableSeasons.map((seasonNumber) => {
+          const season = data?.mediaInfo?.seasons?.find(
+            (mediaSeason) => mediaSeason.seasonNumber === seasonNumber
+          );
+
+          return season?.[is4k ? 'status' : 'status4k'];
+        })
+      ),
+    [data?.mediaInfo?.seasons, is4k, oppositeResolutionAvailableSeasons]
+  );
   const formatSeasonList = useCallback(
     (seasonNumbers: number[]) =>
       seasonNumbers
@@ -293,6 +313,32 @@ const TvRequestModal = ({
           })
         )
         .join(', '),
+    [intl]
+  );
+  const getConflictTitle = useCallback(
+    (conflict: OppositeQualityConflict) =>
+      intl.formatMessage(
+        conflict === 'requested'
+          ? messages.oppositeRequestedTitle
+          : conflict === 'partiallyAvailable'
+            ? messages.oppositePartiallyAvailableTitle
+            : conflict === 'available'
+              ? messages.oppositeAvailableTitle
+              : messages.oppositeMixedTitle
+      ),
+    [intl]
+  );
+  const getConflictDescription = useCallback(
+    (conflict: OppositeQualityConflict) =>
+      intl.formatMessage(
+        conflict === 'requested'
+          ? messages.oppositeRequestedDescription
+          : conflict === 'partiallyAvailable'
+            ? messages.oppositePartiallyAvailableDescription
+            : conflict === 'available'
+              ? messages.oppositeAvailableDescription
+              : messages.oppositeMixedDescription
+      ),
     [intl]
   );
 
@@ -878,6 +924,7 @@ const TvRequestModal = ({
           backgroundClickable
           onCancel={() => setShowSingleSeasonWarning(false)}
           onOk={() => setShowSingleSeasonWarning(false)}
+          hideCancelButton
           title={intl.formatMessage(messages.singleSeasonOnlyTitle)}
           subTitle={data?.name}
           okText={intl.formatMessage(globalMessages.close)}
@@ -892,14 +939,11 @@ const TvRequestModal = ({
       {showOppositeResolutionWarning && (
         <Modal
           backgroundClickable
-          onCancel={
-            isOwnerAccount
-              ? () => {
-                  setShowOppositeResolutionWarning(false);
-                  setConfirmOppositeResolutionRequest(false);
-                }
-              : undefined
-          }
+          onCancel={() => {
+            setShowOppositeResolutionWarning(false);
+            setConfirmOppositeResolutionRequest(false);
+          }}
+          hideCancelButton={!isOwnerAccount}
           onOk={() => {
             if (!isOwnerAccount) {
               setShowOppositeResolutionWarning(false);
@@ -918,13 +962,11 @@ const TvRequestModal = ({
             void sendRequest();
           }}
           title={
-            isOwnerAccount
-              ? intl.formatMessage(messages.confirmOppositeResolutionTitle, {
-                  existingResolution: getResolutionLabel(!is4k),
-                })
+            oppositeResolutionConflict
+              ? getConflictTitle(oppositeResolutionConflict)
               : undefined
           }
-          subTitle={isOwnerAccount ? data?.name : undefined}
+          subTitle={data?.name}
           okText={
             !isOwnerAccount
               ? intl.formatMessage(globalMessages.close)
@@ -947,28 +989,27 @@ const TvRequestModal = ({
                 seasonList: formatSeasonList(
                   oppositeResolutionAvailableSeasons
                 ),
+                conflictDescription: oppositeResolutionConflict
+                  ? getConflictDescription(oppositeResolutionConflict)
+                  : '',
                 existingResolution: getResolutionLabel(!is4k),
                 requestedResolution: getResolutionLabel(is4k),
               })}
             </p>
           ) : (
-            <div className="mx-auto max-w-xl py-2 text-center">
-              <h3 className="text-overseerr text-2xl font-bold">
-                {intl.formatMessage(messages.blockedOppositeResolutionTitle, {
-                  existingResolution: getResolutionLabel(!is4k),
-                })}
-              </h3>
-              <p className="mt-3 text-base text-gray-200">
-                {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
-                  seasonCount: oppositeResolutionAvailableSeasons.length,
-                  seasonList: formatSeasonList(
-                    oppositeResolutionAvailableSeasons
-                  ),
-                  existingResolution: getResolutionLabel(!is4k),
-                  requestedResolution: getResolutionLabel(is4k),
-                })}
-              </p>
-            </div>
+            <p className="text-sm text-gray-300">
+              {intl.formatMessage(messages.blockedOppositeResolutionMessage, {
+                seasonCount: oppositeResolutionAvailableSeasons.length,
+                seasonList: formatSeasonList(
+                  oppositeResolutionAvailableSeasons
+                ),
+                conflictDescription: oppositeResolutionConflict
+                  ? getConflictDescription(oppositeResolutionConflict)
+                  : '',
+                existingResolution: getResolutionLabel(!is4k),
+                requestedResolution: getResolutionLabel(is4k),
+              })}
+            </p>
           )}
         </Modal>
       )}
