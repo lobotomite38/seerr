@@ -204,6 +204,7 @@ class SonarrAPI extends ServarrBase<{
       // If the series already exists, we will simply just update it
       if (series.id) {
         series.monitored = options.monitored ?? series.monitored;
+        series.seriesType = options.seriesType;
         series.tags = options.tags
           ? Array.from(new Set([...series.tags, ...options.tags]))
           : series.tags;

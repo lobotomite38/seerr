@@ -362,6 +362,17 @@ describe('SonarrAPI.addSeries', () => {
     assert.deepEqual(commands, [{ name: 'SeriesSearch', seriesId: 47 }]);
   });
 
+  it('corrects an existing series type before choosing the anime fast path', async () => {
+    const { api, commands } = configureApi({
+      lookupSeries: buildSeries({ seriesType: 'standard' }),
+    });
+
+    const updated = await api.addSeries(buildOptions({ seriesType: 'anime' }));
+
+    assert.equal(updated.seriesType, 'anime');
+    assert.deepEqual(commands, [{ name: 'SeriesSearch', seriesId: 47 }]);
+  });
+
   it('keeps anime season-scoped when another monitored season is incomplete', async () => {
     const { api, commands } = configureApi({
       lookupSeries: buildSeries({
