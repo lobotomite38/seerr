@@ -122,6 +122,11 @@ const MovieRequestModal = ({
     oppositeResolutionStatus
   );
   const isOwner = user?.id === 1;
+  const isNonOwner = Boolean(user && !isOwner);
+  const showImmediateOppositeResolutionWarning =
+    !editRequest && isNonOwner && Boolean(oppositeResolutionConflict);
+  const isOppositeResolutionWarningVisible =
+    showOppositeResolutionWarning || showImmediateOppositeResolutionWarning;
 
   const getConflictTitle = useCallback(
     (conflict: OppositeQualityConflict) =>
@@ -239,6 +244,15 @@ const MovieRequestModal = ({
     sendRequest,
     showOppositeResolutionWarning,
   ]);
+
+  const closeOppositeResolutionWarning = useCallback(() => {
+    setShowOppositeResolutionWarning(false);
+    setConfirmOppositeResolutionRequest(false);
+
+    if (isNonOwner) {
+      onCancel?.();
+    }
+  }, [isNonOwner, onCancel]);
 
   const cancelRequest = async () => {
     setIsUpdating(true);
@@ -413,7 +427,7 @@ const MovieRequestModal = ({
 
   return (
     <>
-      {!showOppositeResolutionWarning && !hideRequestModal && (
+      {!isOppositeResolutionWarningVisible && !hideRequestModal && (
         <Modal
           loading={(!data && !error) || !quota}
           backgroundClickable
@@ -469,13 +483,10 @@ const MovieRequestModal = ({
           )}
         </Modal>
       )}
-      {showOppositeResolutionWarning && (
+      {isOppositeResolutionWarningVisible && (
         <Modal
           backgroundClickable
-          onCancel={() => {
-            setShowOppositeResolutionWarning(false);
-            setConfirmOppositeResolutionRequest(false);
-          }}
+          onCancel={closeOppositeResolutionWarning}
           hideCancelButton={!isOwner}
           wrapHeader
           compactBackdrop
@@ -497,8 +508,7 @@ const MovieRequestModal = ({
           }
           onOk={() => {
             if (!isOwner) {
-              setShowOppositeResolutionWarning(false);
-              setConfirmOppositeResolutionRequest(false);
+              closeOppositeResolutionWarning();
               return;
             }
 
