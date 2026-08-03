@@ -22,42 +22,39 @@ const buildMovie = (overrides: Partial<RadarrMovie> = {}): RadarrMovie => ({
   ...overrides,
 });
 
+const buildRadarr = (): RadarrAPI =>
+  new RadarrAPI({ url: 'http://localhost:7878/api/v3', apiKey: 'test' });
+
+const getAxios = (radarr: RadarrAPI): AxiosInstance =>
+  (radarr as unknown as { axios: AxiosInstance }).axios;
+
+const useImmediateRecovery = (radarr: RadarrAPI): void => {
+  Object.assign(radarr, {
+    addRecoveryPollAttempts: 1,
+    addRecoveryPollIntervalMs: 0,
+  });
+};
+
 describe('RadarrAPI.addMovie', () => {
+  afterEach(() => mock.restoreAll());
+
   it('recovers when Radarr times out after the movie was added', async () => {
-    const api = new RadarrAPI({
-      url: 'http://radarr.test/api/v3',
-      apiKey: 'test-key',
-    });
-
+    const api = buildRadarr();
+    useImmediateRecovery(api);
     const addedMovie = buildMovie();
-    let lookupCount = 0;
-
-    (
-      api as unknown as {
-        axios: {
-          get: (
-            url: string,
-            config?: { params?: { term?: string } }
-          ) => Promise<{
-            data: RadarrMovie[];
-          }>;
-          post: () => Promise<never>;
-        };
-      }
-    ).axios = {
-      get: async (url, config) => {
-        assert.strictEqual(url, '/movie/lookup');
-        assert.strictEqual(config?.params?.term, 'tmdb:24021');
-        lookupCount += 1;
-
-        return {
-          data: lookupCount === 1 ? [] : [addedMovie],
-        };
-      },
-      post: async () => {
+    const axios = getAxios(api);
+    const get = mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [addedMovie],
+    }));
+    const post = mock.method(axios, 'post', async (url: string) => {
+      if (url === '/movie') {
         throw new Error('timeout of 10000ms exceeded');
-      },
-    };
+      }
+      return { data: { id: 991, name: 'MoviesSearch' } };
+    });
 
     const movie = await api.addMovie({
       title: addedMovie.title,
@@ -73,36 +70,30 @@ describe('RadarrAPI.addMovie', () => {
     });
 
     assert.strictEqual(movie.id, addedMovie.id);
-    assert.strictEqual(lookupCount, 2);
+    assert.deepStrictEqual(
+      get.mock.calls.map((call) => call.arguments[0]),
+      ['/movie/lookup', '/movie']
+    );
+    assert.strictEqual(post.mock.callCount(), 2);
+    assert.deepStrictEqual(post.mock.calls[1].arguments[1], {
+      name: 'MoviesSearch',
+      movieIds: [addedMovie.id],
+    });
   });
 
-  it('still throws when the movie is absent after the retry lookup', async () => {
-    const api = new RadarrAPI({
-      url: 'http://radarr.test/api/v3',
-      apiKey: 'test-key',
+  it('still throws when the movie was not installed before the timeout', async () => {
+    const api = buildRadarr();
+    useImmediateRecovery(api);
+    const axios = getAxios(api);
+    mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [],
+    }));
+    mock.method(axios, 'post', async () => {
+      throw new Error('timeout of 10000ms exceeded');
     });
-
-    let lookupCount = 0;
-
-    (
-      api as unknown as {
-        axios: {
-          get: () => Promise<{ data: RadarrMovie[] }>;
-          post: () => Promise<never>;
-        };
-      }
-    ).axios = {
-      get: async () => {
-        lookupCount += 1;
-
-        return {
-          data: [],
-        };
-      },
-      post: async () => {
-        throw new Error('timeout of 10000ms exceeded');
-      },
-    };
 
     await assert.rejects(
       api.addMovie({
@@ -119,16 +110,130 @@ describe('RadarrAPI.addMovie', () => {
       }),
       /Failed to add movie to Radarr/
     );
+  });
 
-    assert.strictEqual(lookupCount, 2);
+  it('reconciles partial persisted settings before searching', async () => {
+    const api = buildRadarr();
+    useImmediateRecovery(api);
+    const axios = getAxios(api);
+    const partial = buildMovie({
+      monitored: false,
+      qualityProfileId: 3,
+      profileId: 3,
+      path: '/wrong/The Castle (1997)',
+      tags: [4],
+    });
+    mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [partial],
+    }));
+    const put = mock.method(
+      axios,
+      'put',
+      async (_url: string, body: unknown) => ({
+        data: {
+          ...partial,
+          ...(body as object),
+          path: '/movies/The Castle (1997)',
+        },
+      })
+    );
+    const post = mock.method(axios, 'post', async (url: string) => {
+      if (url === '/movie') {
+        throw new Error('timeout of 10000ms exceeded');
+      }
+      return { data: { id: 992 } };
+    });
+
+    const movie = await api.addMovie({
+      title: 'The Castle',
+      tmdbId: partial.tmdbId,
+      qualityProfileId: 12,
+      profileId: 12,
+      year: 1997,
+      minimumAvailability: 'released',
+      rootFolderPath: '/movies',
+      tags: [9],
+      monitored: true,
+      searchNow: true,
+    });
+
+    assert.strictEqual(movie.monitored, true);
+    assert.strictEqual(put.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      (put.mock.calls[0].arguments[1] as { tags: number[] }).tags,
+      [4, 9]
+    );
+    assert.strictEqual(post.mock.callCount(), 2);
+  });
+
+  it('rejects when the recovered movie search command is not accepted', async () => {
+    const api = buildRadarr();
+    useImmediateRecovery(api);
+    const axios = getAxios(api);
+    mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [buildMovie()],
+    }));
+    mock.method(axios, 'post', async (url: string) => {
+      if (url === '/movie') {
+        throw new Error('timeout of 10000ms exceeded');
+      }
+      return { data: {} };
+    });
+
+    await assert.rejects(
+      api.addMovie({
+        title: 'The Castle',
+        tmdbId: 24021,
+        qualityProfileId: 12,
+        profileId: 12,
+        year: 1997,
+        minimumAvailability: 'released',
+        rootFolderPath: '/movies',
+        tags: [],
+        monitored: true,
+        searchNow: true,
+      }),
+      /Failed to add movie to Radarr/
+    );
+  });
+
+  it('does not search a recovered movie that already has a file', async () => {
+    const api = buildRadarr();
+    useImmediateRecovery(api);
+    const axios = getAxios(api);
+    mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [buildMovie({ hasFile: true })],
+    }));
+    const post = mock.method(axios, 'post', async () => {
+      throw new Error('timeout of 10000ms exceeded');
+    });
+
+    await assert.doesNotReject(() =>
+      api.addMovie({
+        title: 'The Castle',
+        tmdbId: 24021,
+        qualityProfileId: 12,
+        profileId: 12,
+        year: 1997,
+        minimumAvailability: 'released',
+        rootFolderPath: '/movies',
+        tags: [],
+        monitored: true,
+        searchNow: true,
+      })
+    );
+    assert.strictEqual(post.mock.callCount(), 1);
   });
 });
-
-const buildRadarr = (): RadarrAPI =>
-  new RadarrAPI({ url: 'http://localhost:7878/api/v3', apiKey: 'test' });
-
-const getAxios = (radarr: RadarrAPI): AxiosInstance =>
-  (radarr as unknown as { axios: AxiosInstance }).axios;
 
 describe('RadarrAPI.removeMovie', () => {
   afterEach(() => mock.restoreAll());

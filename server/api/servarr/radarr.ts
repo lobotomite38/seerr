@@ -73,6 +73,9 @@ export interface RadarrHistoryRecord {
 }
 
 class RadarrAPI extends ServarrBase<{ movieId: number }> {
+  protected addRecoveryPollAttempts = 6;
+  protected addRecoveryPollIntervalMs = 1000;
+
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, cacheName: 'radarr', apiName: 'Radarr' });
   }
@@ -98,6 +101,96 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       });
     }
   };
+
+  private async findInstalledMovieByTmdbId(
+    tmdbId: number
+  ): Promise<RadarrMovie | null> {
+    const movies = await this.getMovies();
+    return movies.find((movie) => movie.tmdbId === tmdbId && movie.id) ?? null;
+  }
+
+  private async pollInstalledMovieByTmdbId(
+    tmdbId: number
+  ): Promise<RadarrMovie | null> {
+    for (
+      let attempt = 0;
+      attempt < this.addRecoveryPollAttempts;
+      attempt += 1
+    ) {
+      const movie = await this.findInstalledMovieByTmdbId(tmdbId);
+      if (movie) {
+        return movie;
+      }
+      if (attempt + 1 < this.addRecoveryPollAttempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.addRecoveryPollIntervalMs)
+        );
+      }
+    }
+    return null;
+  }
+
+  private async reconcileRecoveredMovie(
+    movie: RadarrMovie,
+    options: RadarrMovieOptions
+  ): Promise<RadarrMovie> {
+    const intendedTags = Array.from(
+      new Set([...(movie.tags ?? []), ...options.tags])
+    );
+    const rootMatches =
+      movie.path === options.rootFolderPath ||
+      movie.path.startsWith(`${options.rootFolderPath.replace(/\/$/, '')}/`);
+    const settingsMatch =
+      movie.monitored === options.monitored &&
+      movie.qualityProfileId === options.qualityProfileId &&
+      movie.profileId === options.profileId &&
+      rootMatches &&
+      intendedTags.length === (movie.tags ?? []).length;
+
+    if (settingsMatch) {
+      return movie;
+    }
+
+    const folderName = movie.path.split('/').filter(Boolean).at(-1);
+    if (!folderName) {
+      throw new Error('Radarr recovered movie has no usable folder name');
+    }
+    const intendedPath = `${options.rootFolderPath.replace(
+      /\/$/,
+      ''
+    )}/${folderName}`;
+
+    const response = await this.axios.put<RadarrMovie>('/movie', {
+      ...movie,
+      title: options.title,
+      qualityProfileId: options.qualityProfileId,
+      profileId: options.profileId,
+      minimumAvailability: options.minimumAvailability,
+      rootFolderPath: options.rootFolderPath,
+      path: intendedPath,
+      monitored: options.monitored,
+      tags: intendedTags,
+    });
+
+    const reconciledRootMatches =
+      response.data.path === options.rootFolderPath ||
+      response.data.path.startsWith(
+        `${options.rootFolderPath.replace(/\/$/, '')}/`
+      );
+    const reconciledTags = new Set(response.data.tags ?? []);
+    if (
+      !response.data.id ||
+      response.data.tmdbId !== options.tmdbId ||
+      response.data.monitored !== options.monitored ||
+      response.data.qualityProfileId !== options.qualityProfileId ||
+      response.data.profileId !== options.profileId ||
+      !reconciledRootMatches ||
+      options.tags.some((tag) => !reconciledTags.has(tag))
+    ) {
+      throw new Error('Radarr did not confirm recovered movie settings');
+    }
+    return response.data;
+  }
 
   public getMovie = async ({ id }: { id: number }): Promise<RadarrMovie> => {
     try {
@@ -157,6 +250,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   public addMovie = async (
     options: RadarrMovieOptions
   ): Promise<RadarrMovie> => {
+    let mutationMayHavePersisted = false;
     try {
       const movie = await this.getMovieByTmdbId(options.tmdbId);
 
@@ -173,6 +267,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
 
       // movie exists in Radarr but is neither downloaded nor monitored
       if (movie.id && !movie.monitored) {
+        mutationMayHavePersisted = true;
         const response = await this.axios.put<RadarrMovie>(`/movie`, {
           ...movie,
           title: options.title,
@@ -189,6 +284,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
             searchForMovie: options.searchNow,
           },
         });
+        mutationMayHavePersisted = false;
 
         if (response.data.monitored) {
           logger.info(
@@ -205,7 +301,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
           });
 
           if (options.searchNow) {
-            this.searchMovie(response.data.id);
+            await this.searchMovie(response.data.id);
           }
 
           return response.data;
@@ -237,12 +333,13 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
               movieTitle: movie.title,
             }
           );
-          this.searchMovie(movie.id);
+          await this.searchMovie(movie.id);
         }
 
         return movie;
       }
 
+      mutationMayHavePersisted = true;
       const response = await this.axios.post<RadarrMovie>(`/movie`, {
         title: options.title,
         qualityProfileId: options.qualityProfileId,
@@ -258,6 +355,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
           searchForMovie: options.searchNow,
         },
       });
+      mutationMayHavePersisted = false;
 
       if (response.data.id) {
         logger.info('Radarr accepted request', { label: 'Radarr' });
@@ -275,26 +373,39 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       return response.data;
     } catch (e) {
       try {
-        const fallbackMovie = await this.lookupMovieByTmdbId(options.tmdbId);
+        if (!mutationMayHavePersisted) {
+          throw e;
+        }
+        const installedMovie = await this.pollInstalledMovieByTmdbId(
+          options.tmdbId
+        );
 
-        if (fallbackMovie) {
+        if (installedMovie) {
+          const recoveredMovie = await this.reconcileRecoveredMovie(
+            installedMovie,
+            options
+          );
           logger.warn(
-            'Radarr add request failed, but the movie exists after retry lookup. Treating request as successful.',
+            'Radarr add request failed, but the installed movie was confirmed and reconciled.',
             {
               label: 'Radarr',
               errorMessage: e.message,
-              movieId: fallbackMovie.id,
-              movieTitle: fallbackMovie.title,
+              movieId: recoveredMovie.id,
+              movieTitle: recoveredMovie.title,
               tmdbId: options.tmdbId,
             }
           );
 
           logger.debug('Radarr recovered add details', {
             label: 'Radarr',
-            movie: fallbackMovie,
+            movie: recoveredMovie,
           });
 
-          return fallbackMovie;
+          if (options.searchNow && !recoveredMovie.hasFile) {
+            await this.searchMovie(recoveredMovie.id);
+          }
+
+          return recoveredMovie;
         }
       } catch (lookupError) {
         logger.warn('Radarr add failed and retry lookup did not complete', {
@@ -327,7 +438,13 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     });
 
     try {
-      await this.runCommand('MoviesSearch', { movieIds: [movieId] });
+      const response = await this.axios.post<{ id?: number }>('/command', {
+        name: 'MoviesSearch',
+        movieIds: [movieId],
+      });
+      if (!response.data?.id) {
+        throw new Error('Radarr did not return an accepted command id');
+      }
     } catch (e) {
       logger.error(
         'Something went wrong while executing Radarr movie search.',
@@ -337,6 +454,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
           movieId,
         }
       );
+      throw e;
     }
   }
   public removeMovie = async (tmdbId: number): Promise<void> => {
