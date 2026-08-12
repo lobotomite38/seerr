@@ -22,6 +22,10 @@ import type {
   MediaRequestBody,
   RequestResultsResponse,
 } from '@server/interfaces/api/requestInterfaces';
+import {
+  OwnerCancellationError,
+  cancelOwnedRequest,
+} from '@server/lib/ownerRequestCancellation';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -631,6 +635,40 @@ requestRoutes.delete('/:requestId', async (req, res, next) => {
     next({ status: 404, message: 'Request not found.' });
   }
 });
+
+requestRoutes.post<{ requestId: string }>(
+  '/:requestId/cancel',
+  async (req, res, next) => {
+    if (!req.user) {
+      return next({ status: 401, message: 'Authentication required.' });
+    }
+
+    const requestId = Number(req.params.requestId);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return next({ status: 400, message: 'Invalid request ID.' });
+    }
+
+    try {
+      const result = await cancelOwnedRequest(requestId, req.user);
+      return res.status(200).json(result);
+    } catch (e) {
+      if (e instanceof OwnerCancellationError) {
+        return next({ status: e.status, message: e.message });
+      }
+      logger.error('Owner request cancellation failed.', {
+        label: 'Media Deletion Audit',
+        requestId,
+        actorId: req.user.id,
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      return next({
+        status: 502,
+        message:
+          'Radarr/Sonarr could not confirm safe cancellation. No Seerr changes were made.',
+      });
+    }
+  }
+);
 
 requestRoutes.post<{
   requestId: string;

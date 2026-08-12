@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it, mock } from 'node:test';
 
+import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
+import SonarrAPI, { type SonarrSeries } from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
 import {
   MediaRequestStatus,
@@ -11,8 +13,9 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
-import type SeasonRequest from '@server/entity/SeasonRequest';
+import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import { checkUser } from '@server/middleware/auth';
@@ -895,5 +898,515 @@ describe('DELETE /request/:requestId, deleted media status restoration', () => {
 
     const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
     assert.strictEqual(updated.status, MediaStatus.PARTIALLY_AVAILABLE);
+  });
+});
+
+describe('POST /request/:requestId/cancel', () => {
+  const baseServer = {
+    hostname: '127.0.0.1',
+    port: 9999,
+    apiKey: 'test',
+    useSsl: false,
+    activeProfileId: 1,
+    activeProfileName: 'Test',
+    activeDirectory: '/test',
+    tags: [],
+    isDefault: true,
+    externalUrl: '',
+    syncEnabled: true,
+    preventSearch: true,
+    tagRequests: false,
+    overrideRule: [],
+  };
+
+  beforeEach(() => {
+    const settings = getSettings();
+    settings.radarr = [
+      {
+        ...baseServer,
+        id: 1,
+        name: 'Radarr 1080p',
+        is4k: false,
+        minimumAvailability: 'released',
+      },
+      {
+        ...baseServer,
+        id: 0,
+        name: 'Radarr 4K',
+        is4k: true,
+        minimumAvailability: 'released',
+      },
+    ];
+    settings.sonarr = [
+      {
+        ...baseServer,
+        id: 1,
+        name: 'Sonarr 1080p',
+        is4k: false,
+        seriesType: 'standard',
+        animeSeriesType: 'anime',
+        enableSeasonFolders: true,
+        monitorNewItems: 'all',
+      },
+      {
+        ...baseServer,
+        id: 0,
+        name: 'Sonarr 4K',
+        is4k: true,
+        seriesType: 'standard',
+        animeSeriesType: 'anime',
+        enableSeasonFolders: true,
+        monitorNewItems: 'all',
+      },
+    ];
+  });
+
+  async function seedCancellationRequest({
+    type = MediaType.MOVIE,
+    is4k = false,
+    status = MediaRequestStatus.APPROVED,
+    ownerEmail = 'friend@seerr.dev',
+    tmdbId = 88001,
+  }: {
+    type?: MediaType;
+    is4k?: boolean;
+    status?: MediaRequestStatus;
+    ownerEmail?: string;
+    tmdbId?: number;
+  } = {}) {
+    const owner = await getRepository(User).findOneOrFail({
+      where: { email: ownerEmail },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: type,
+        tmdbId,
+        tvdbId: type === MediaType.TV ? tmdbId + 1000 : undefined,
+        status: is4k ? MediaStatus.UNKNOWN : MediaStatus.PROCESSING,
+        status4k: is4k ? MediaStatus.PROCESSING : MediaStatus.UNKNOWN,
+        serviceId: is4k ? null : 1,
+        externalServiceId: is4k ? null : 501,
+        serviceId4k: is4k ? 0 : null,
+        externalServiceId4k: is4k ? 601 : null,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type,
+        status,
+        media,
+        requestedBy: owner,
+        is4k,
+        serverId: is4k ? 0 : 1,
+        profileId: 1,
+        seasons:
+          type === MediaType.TV
+            ? [
+                new SeasonRequest({
+                  seasonNumber: 1,
+                  status,
+                }),
+              ]
+            : [],
+      })
+    );
+    return { media, mediaRequest, owner };
+  }
+
+  const movie = (overrides: Partial<RadarrMovie> = {}): RadarrMovie => ({
+    id: 501,
+    title: 'Test Movie',
+    isAvailable: false,
+    monitored: true,
+    tmdbId: 88001,
+    imdbId: '',
+    titleSlug: 'test-movie',
+    folderName: 'Test Movie',
+    path: '/test/Test Movie',
+    profileId: 1,
+    qualityProfileId: 1,
+    added: new Date().toISOString(),
+    hasFile: false,
+    tags: [],
+    ...overrides,
+  });
+
+  const series = (overrides: Partial<SonarrSeries> = {}): SonarrSeries => ({
+    title: 'Test Series',
+    sortTitle: 'test series',
+    seasonCount: 1,
+    status: 'continuing',
+    overview: '',
+    network: '',
+    airTime: '',
+    images: [],
+    remotePoster: '',
+    seasons: [{ seasonNumber: 1, monitored: true }],
+    year: 2020,
+    path: '/test/Test Series',
+    profileId: 1,
+    languageProfileId: 1,
+    seasonFolder: true,
+    monitored: true,
+    monitorNewItems: 'all',
+    useSceneNumbering: false,
+    runtime: 60,
+    tvdbId: 89001,
+    tvRageId: 0,
+    tvMazeId: 0,
+    firstAired: '2020-01-01',
+    seriesType: 'standard',
+    cleanTitle: 'testseries',
+    imdbId: '',
+    titleSlug: 'test-series',
+    certification: '',
+    genres: [],
+    tags: [],
+    added: new Date().toISOString(),
+    ratings: { votes: 0, value: 0 },
+    qualityProfileId: 1,
+    id: 501,
+    statistics: {
+      seasonCount: 1,
+      episodeFileCount: 0,
+      episodeCount: 10,
+      totalEpisodeCount: 10,
+      sizeOnDisk: 0,
+      releaseGroups: [],
+      percentOfEpisodes: 0,
+    },
+    ...overrides,
+  });
+
+  it('removes a fileless 1080p movie from Radarr before clearing Seerr', async (t) => {
+    const { media, mediaRequest } = await seedCancellationRequest();
+    t.mock.method(RadarrAPI.prototype, 'getMovieIfExists', async () => movie());
+    t.mock.method(
+      RadarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    const remove = t.mock.method(
+      RadarrAPI.prototype,
+      'deleteMovieById',
+      async () => 'removed' as const
+    );
+    const pushover = t.mock.method(
+      PushoverAgent.prototype,
+      'send',
+      async () => true
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.arrRemoval, 'removed');
+    assert.strictEqual(remove.mock.calls.length, 1);
+    assert.strictEqual(pushover.mock.calls.length, 0);
+    assert.deepStrictEqual(remove.mock.calls[0].arguments, [
+      501,
+      {
+        deleteFiles: false,
+        addImportExclusion: false,
+      },
+    ]);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      0
+    );
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.serviceId, null);
+    assert.strictEqual(updated.externalServiceId, null);
+    assert.strictEqual(updated.status, MediaStatus.UNKNOWN);
+  });
+
+  it('routes a 4K movie cancellation to the exact 4K server linkage', async (t) => {
+    const { mediaRequest } = await seedCancellationRequest({
+      is4k: true,
+      tmdbId: 88002,
+    });
+    t.mock.method(RadarrAPI.prototype, 'getMovieIfExists', async (id: number) =>
+      movie({ id, tmdbId: 88002 })
+    );
+    t.mock.method(
+      RadarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    const remove = t.mock.method(
+      RadarrAPI.prototype,
+      'deleteMovieById',
+      async () => 'removed' as const
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(remove.mock.calls[0].arguments[0], 601);
+  });
+
+  it('refuses non-owners without contacting Radarr', async (t) => {
+    const { mediaRequest } = await seedCancellationRequest({
+      ownerEmail: 'admin@seerr.dev',
+    });
+    const lookup = t.mock.method(
+      RadarrAPI.prototype,
+      'getMovieIfExists',
+      async () => movie()
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(lookup.mock.calls.length, 0);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      1
+    );
+  });
+
+  for (const unsafe of ['files', 'queue', 'shared'] as const) {
+    it(`leaves Radarr and Seerr unchanged when ${unsafe} make cancellation unsafe`, async (t) => {
+      const { media, mediaRequest, owner } = await seedCancellationRequest();
+      if (unsafe === 'shared') {
+        await getRepository(MediaRequest).save(
+          new MediaRequest({
+            type: MediaType.MOVIE,
+            status: MediaRequestStatus.PENDING,
+            media,
+            requestedBy: owner,
+            is4k: false,
+            serverId: 1,
+            seasons: [],
+          })
+        );
+      }
+      const lookup = t.mock.method(
+        RadarrAPI.prototype,
+        'getMovieIfExists',
+        async () =>
+          movie(
+            unsafe === 'files'
+              ? {
+                  hasFile: true,
+                  movieFile: {
+                    id: 1,
+                    movieId: 501,
+                    size: 1,
+                    dateAdded: new Date().toISOString(),
+                    mediaInfo: {
+                      id: 1,
+                      audioBitrate: 0,
+                      audioChannels: 0,
+                      audioStreamCount: 0,
+                      videoBitDepth: 0,
+                      videoBitrate: 0,
+                      videoFps: 0,
+                    },
+                    qualityCutoffNotMet: false,
+                  },
+                }
+              : {}
+          )
+      );
+      t.mock.method(RadarrAPI.prototype, 'getQueueForCancellation', async () =>
+        unsafe === 'queue' ? [{ movieId: 501 }] : []
+      );
+      const remove = t.mock.method(
+        RadarrAPI.prototype,
+        'deleteMovieById',
+        async () => 'removed' as const
+      );
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+      const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(remove.mock.calls.length, 0);
+      assert.strictEqual(
+        await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+        1
+      );
+      assert.strictEqual(lookup.mock.calls.length, unsafe === 'shared' ? 0 : 1);
+    });
+  }
+
+  it('cleans Seerr when the exact Radarr record is already missing', async (t) => {
+    const { mediaRequest } = await seedCancellationRequest();
+    t.mock.method(RadarrAPI.prototype, 'getMovieIfExists', async () => null);
+    t.mock.method(
+      RadarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    const remove = t.mock.method(
+      RadarrAPI.prototype,
+      'deleteMovieById',
+      async () => 'removed' as const
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.arrRemoval, 'missing');
+    assert.strictEqual(remove.mock.calls.length, 0);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      0
+    );
+  });
+
+  it('leaves Seerr unchanged on a Radarr deletion failure', async (t) => {
+    const { media, mediaRequest } = await seedCancellationRequest();
+    t.mock.method(RadarrAPI.prototype, 'getMovieIfExists', async () => movie());
+    t.mock.method(
+      RadarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    t.mock.method(RadarrAPI.prototype, 'deleteMovieById', async () => {
+      throw new Error('Radarr unavailable');
+    });
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 502);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      1
+    );
+    const unchanged = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(unchanged.externalServiceId, 501);
+  });
+
+  it('removes a fileless queue-free TV series with no other seasons', async (t) => {
+    const { mediaRequest } = await seedCancellationRequest({
+      type: MediaType.TV,
+      tmdbId: 88001,
+    });
+    t.mock.method(SonarrAPI.prototype, 'getSeriesIfExists', async () =>
+      series()
+    );
+    t.mock.method(
+      SonarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    t.mock.method(SonarrAPI.prototype, 'getEpisodes', async () => []);
+    const remove = t.mock.method(
+      SonarrAPI.prototype,
+      'deleteSeriesById',
+      async () => 'removed' as const
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(remove.mock.calls.length, 1);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      0
+    );
+  });
+
+  it('refuses TV cancellation when episode files or other monitored seasons exist', async (t) => {
+    for (const unsafe of ['files', 'seasons'] as const) {
+      const { mediaRequest } = await seedCancellationRequest({
+        type: MediaType.TV,
+        tmdbId: unsafe === 'files' ? 88001 : 88002,
+      });
+      t.mock.method(SonarrAPI.prototype, 'getSeriesIfExists', async () =>
+        series({
+          tvdbId: unsafe === 'files' ? 89001 : 89002,
+          seasons:
+            unsafe === 'seasons'
+              ? [
+                  { seasonNumber: 1, monitored: true },
+                  { seasonNumber: 2, monitored: true },
+                ]
+              : [{ seasonNumber: 1, monitored: true }],
+        })
+      );
+      t.mock.method(
+        SonarrAPI.prototype,
+        'getQueueForCancellation',
+        async () => []
+      );
+      t.mock.method(SonarrAPI.prototype, 'getEpisodes', async () =>
+        unsafe === 'files'
+          ? [
+              {
+                seriesId: 501,
+                episodeFileId: 1,
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: '',
+                airDate: '',
+                airDateUtc: '',
+                overview: '',
+                hasFile: true,
+                monitored: true,
+                absoluteEpisodeNumber: 1,
+                unverifiedSceneNumbering: false,
+                id: 1,
+              },
+            ]
+          : []
+      );
+      const remove = t.mock.method(
+        SonarrAPI.prototype,
+        'deleteSeriesById',
+        async () => 'removed' as const
+      );
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+      const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
+
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(remove.mock.calls.length, 0);
+      assert.strictEqual(
+        await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+        1
+      );
+      t.mock.restoreAll();
+    }
+  });
+
+  it('serializes concurrent cancellation attempts', async (t) => {
+    const { mediaRequest } = await seedCancellationRequest();
+    t.mock.method(RadarrAPI.prototype, 'getMovieIfExists', async () => movie());
+    t.mock.method(
+      RadarrAPI.prototype,
+      'getQueueForCancellation',
+      async () => []
+    );
+    const remove = t.mock.method(
+      RadarrAPI.prototype,
+      'deleteMovieById',
+      async () => 'removed' as const
+    );
+    const first = await loginAs('friend@seerr.dev', 'test1234');
+    const second = await loginAs('friend@seerr.dev', 'test1234');
+
+    const responses = await Promise.all([
+      first.post(`/request/${mediaRequest.id}/cancel`),
+      second.post(`/request/${mediaRequest.id}/cancel`),
+    ]);
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status).sort(),
+      [200, 404]
+    );
+    assert.strictEqual(remove.mock.calls.length, 1);
   });
 });

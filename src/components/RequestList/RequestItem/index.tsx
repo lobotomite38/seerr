@@ -42,7 +42,9 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   mediaerror: '{mediaType} Not Found',
   editrequest: 'Edit Request',
   deleterequest: 'Delete Request',
-  cancelRequest: 'Cancel Request',
+  cancelRequest: 'Cancel request and remove from Radarr/Sonarr',
+  cancelRequestFailed:
+    'This request could not be safely cancelled. It may have files, a queued download, or another dependent request.',
   tmdbid: 'TMDB ID',
   tvdbid: 'TheTVDB ID',
   unknowntitle: 'Unknown Title',
@@ -334,6 +336,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   });
 
   const [isRetrying, setRetrying] = useState(false);
+  const [isCancelling, setCancelling] = useState(false);
   const [updatingType, setUpdatingType] = useState<
     'approve' | 'decline' | null
   >(null);
@@ -362,11 +365,30 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
     mutate('/api/v1/request/count');
   };
 
+  const cancelOwnedRequest = async () => {
+    setCancelling(true);
+    try {
+      await axios.post(`/api/v1/request/${request.id}/cancel`);
+      revalidateList();
+      mutate('/api/v1/request/count');
+    } catch (e) {
+      const message = axios.isAxiosError(e)
+        ? e.response?.data?.message
+        : undefined;
+      addToast(message ?? intl.formatMessage(messages.cancelRequestFailed), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const deleteMediaFile = async () => {
     if (request.media) {
       try {
         await axios.delete(
-          `/api/v1/media/${request.media.id}/file?is4k=${request.is4k}`
+          `/api/v1/media/${request.media.id}/file?is4k=${request.is4k}&requestId=${request.id}`
         );
       } catch (e) {
         if (!axios.isAxiosError(e) || e.response?.status !== 404) {
@@ -792,15 +814,23 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 </Button>
               </span>
             )}
-          {requestData.status === MediaRequestStatus.PENDING &&
+          {[
+            MediaRequestStatus.PENDING,
+            MediaRequestStatus.APPROVED,
+            MediaRequestStatus.FAILED,
+          ].includes(requestData.status) &&
             !hasPermission(Permission.MANAGE_REQUESTS) &&
-            requestData.requestedBy.id === user?.id && (
+            requestData.requestedBy.id === user?.id &&
+            ![MediaStatus.AVAILABLE, MediaStatus.PARTIALLY_AVAILABLE].includes(
+              requestData.media[requestData.is4k ? 'status4k' : 'status']
+            ) && (
               <ConfirmButton
-                onClick={() => deleteRequest()}
+                onClick={() => cancelOwnedRequest()}
                 confirmText={intl.formatMessage(globalMessages.areyousure)}
                 className="w-full"
+                disabled={isCancelling}
               >
-                <XMarkIcon />
+                {isCancelling ? <Spinner /> : <XMarkIcon />}
                 <span>{intl.formatMessage(messages.cancelRequest)}</span>
               </ConfirmButton>
             )}

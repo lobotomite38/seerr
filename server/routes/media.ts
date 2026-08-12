@@ -11,6 +11,9 @@ import type {
   MediaResultsResponse,
   MediaWatchDataResponse,
 } from '@server/interfaces/api/mediaInterfaces';
+import { logMediaDeletionAudit } from '@server/lib/mediaDeletionAudit';
+import { Notification } from '@server/lib/notifications';
+import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -204,11 +207,13 @@ mediaRoutes.delete(
   '/:id/file',
   isAuthenticated(Permission.MANAGE_REQUESTS),
   async (req, res, next) => {
+    let deletionAudit: Parameters<typeof logMediaDeletionAudit>[0] | undefined;
     try {
       const settings = getSettings();
       const mediaRepository = getRepository(Media);
       const media = await mediaRepository.findOneOrFail({
         where: { id: Number(req.params.id) },
+        relations: { requests: true },
       });
 
       const is4k = String(req.query.is4k) === 'true';
@@ -257,6 +262,40 @@ mediaRoutes.delete(
         });
       }
 
+      const linkedItemId = is4k
+        ? media.externalServiceId4k
+        : media.externalServiceId;
+      const requestedAuditId = Number(req.query.requestId);
+      const auditRequest = Number.isInteger(requestedAuditId)
+        ? media.requests.find(
+            (request) =>
+              request.id === requestedAuditId && request.is4k === is4k
+          )
+        : media.requests
+            .filter((request) => request.is4k === is4k)
+            .sort((left, right) => right.id - left.id)[0];
+      if (Number.isInteger(requestedAuditId) && !auditRequest) {
+        return next({
+          status: 409,
+          message: 'The request does not match this media and quality.',
+        });
+      }
+      deletionAudit = {
+        actorId: req.user?.id ?? 0,
+        actorName: req.user?.displayName ?? 'unknown',
+        mediaId: media.id,
+        mediaType: media.mediaType,
+        tmdbId: media.tmdbId,
+        tvdbId: media.tvdbId,
+        quality: is4k ? '4K' : '1080p',
+        requestId: auditRequest?.id,
+        arrServerId: serviceSettings.id,
+        arrServerName: serviceSettings.name,
+        arrItemId: linkedItemId ?? undefined,
+        preRemovalFileState: 'unknown',
+        outcome: 'started',
+      };
+
       let service;
       if (isMovie) {
         service = new RadarrAPI({
@@ -271,13 +310,37 @@ mediaRoutes.delete(
       }
 
       if (isMovie) {
+        const movie = linkedItemId
+          ? await (service as RadarrAPI).getMovieIfExists(linkedItemId)
+          : await (service as RadarrAPI).getMovieByTmdbId(media.tmdbId);
+        deletionAudit.arrItemId = movie?.id ?? linkedItemId ?? undefined;
+        deletionAudit.preRemovalFileState =
+          movie?.hasFile || movie?.movieFile ? 'has-files' : 'fileless';
+        deletionAudit.preRemovalFileCount =
+          movie?.hasFile || movie?.movieFile ? 1 : 0;
         await (service as RadarrAPI).removeMovie(media.tmdbId);
       } else {
         const tmdb = new TheMovieDb();
-        const series = await tmdb.getTvShow({ tvId: media.tmdbId });
-        const tvdbId = series.external_ids.tvdb_id ?? media.tvdbId;
+        const tmdbSeries = await tmdb.getTvShow({ tvId: media.tmdbId });
+        const tvdbId = tmdbSeries.external_ids.tvdb_id ?? media.tvdbId;
         if (!tvdbId) {
           throw new Error('TVDB ID not found');
+        }
+        const arrSeries = linkedItemId
+          ? await (service as SonarrAPI).getSeriesIfExists(linkedItemId)
+          : await (service as SonarrAPI).getSeriesByTvdbId(tvdbId);
+        if (arrSeries?.id) {
+          const episodes = await (service as SonarrAPI).getEpisodes(
+            arrSeries.id
+          );
+          deletionAudit.arrItemId = arrSeries.id;
+          deletionAudit.preRemovalFileCount = episodes.filter(
+            (episode) => episode.hasFile || episode.episodeFileId > 0
+          ).length;
+          deletionAudit.preRemovalFileState =
+            deletionAudit.preRemovalFileCount > 0 ? 'has-files' : 'fileless';
+        } else {
+          deletionAudit.preRemovalFileState = 'missing';
         }
         await (service as SonarrAPI).removeSeries(tvdbId);
 
@@ -290,6 +353,34 @@ mediaRoutes.delete(
       media.resetServiceData(is4k);
       await mediaRepository.save(media);
 
+      deletionAudit.outcome = 'admin-removed';
+      logMediaDeletionAudit(deletionAudit);
+      const pushoverSent = await new PushoverAgent().send(
+        Notification.TEST_NOTIFICATION,
+        {
+          event: 'Seerr destructive media removal',
+          subject: `${media.mediaType === MediaType.MOVIE ? 'Movie' : 'Series'} removed from ${serviceSettings.name}`,
+          message: `${req.user?.displayName ?? 'Unknown administrator'} removed the ${is4k ? '4K' : '1080p'} Radarr/Sonarr item with delete-files enabled. Pre-removal state: ${deletionAudit.preRemovalFileState}.`,
+          notifySystem: true,
+          notifyAdmin: false,
+          media,
+          extra: [
+            { name: 'Media ID', value: String(media.id) },
+            {
+              name: 'ARR Item ID',
+              value: String(deletionAudit.arrItemId ?? 'missing'),
+            },
+          ],
+        }
+      );
+      if (!pushoverSent) {
+        logger.error('Destructive media removal Pushover was not sent.', {
+          label: 'Media Deletion Audit',
+          mediaId: media.id,
+          actorId: req.user?.id,
+        });
+      }
+
       return res.status(204).send();
     } catch (e) {
       if (e instanceof EntityNotFoundError) {
@@ -300,6 +391,13 @@ mediaRoutes.delete(
         mediaId: req.params.id,
         message: e.message,
       });
+      if (deletionAudit) {
+        logMediaDeletionAudit({
+          ...deletionAudit,
+          outcome: 'failed',
+          reason: e instanceof Error ? e.message : String(e),
+        });
+      }
       next({ status: 500, message: 'Failed to delete media file' });
     }
   }

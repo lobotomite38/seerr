@@ -6,11 +6,12 @@ interface ConfirmButtonProps {
   onClick: () => void;
   confirmText: React.ReactNode;
   className?: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }
 
 const ConfirmButton = forwardRef<HTMLButtonElement, ConfirmButtonProps>(
-  ({ onClick, children, confirmText, className }, parentRef) => {
+  ({ onClick, children, confirmText, className, disabled }, parentRef) => {
     const ref = useRef(null);
     useClickOutside(ref, () => setIsClicked(false));
     const [isClicked, setIsClicked] = useState(false);
@@ -19,6 +20,7 @@ const ConfirmButton = forwardRef<HTMLButtonElement, ConfirmButtonProps>(
         ref={parentRef}
         buttonType="danger"
         className={`relative overflow-hidden ${className}`}
+        disabled={disabled}
         onClick={(e) => {
           e.preventDefault();
 

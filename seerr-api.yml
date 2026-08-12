@@ -6667,6 +6667,46 @@ paths:
       responses:
         '204':
           description: Succesfully removed request
+  /request/{requestId}/cancel:
+    post:
+      summary: Safely cancel an owned request
+      description: |
+        Cancels an unresolved request owned by the authenticated user. The exact
+        fileless, queue-free Radarr or Sonarr item is removed without deleting
+        files or adding an import exclusion before the Seerr request and service
+        linkage are cleared. Requests with files, queued downloads, shared
+        dependencies, or other monitored TV seasons are refused.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          description: Request ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      responses:
+        '200':
+          description: Request safely cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requestId:
+                    type: number
+                  arrRemoval:
+                    type: string
+                    enum: [removed, missing]
+        '403':
+          description: The authenticated user does not own the request
+        '404':
+          description: Request not found
+        '409':
+          description: Safety checks refused cancellation
+        '502':
+          description: Radarr or Sonarr could not confirm safe cancellation
   /request/{requestId}/retry:
     post:
       summary: Retry failed request

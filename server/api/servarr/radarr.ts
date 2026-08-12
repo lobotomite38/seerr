@@ -1,4 +1,5 @@
 import logger from '@server/logger';
+import axios from 'axios';
 import ServarrBase from './base';
 
 export interface RadarrMovieOptions {
@@ -203,6 +204,41 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       });
     }
   };
+
+  public async getMovieIfExists(id: number): Promise<RadarrMovie | null> {
+    try {
+      return await this.getMovie({ id });
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        axios.isAxiosError(e.cause) &&
+        e.cause.response?.status === 404
+      ) {
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  public async deleteMovieById(
+    id: number,
+    options: { deleteFiles: boolean; addImportExclusion: boolean }
+  ): Promise<'removed' | 'missing'> {
+    try {
+      await this.axios.delete(`/movie/${id}`, { params: options });
+      this.removeCache(`/movie/${id}`);
+      return 'removed';
+    } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 404) {
+        return 'missing';
+      }
+      throw e;
+    }
+  }
+
+  public async getQueueForCancellation() {
+    return this.getQueue();
+  }
 
   public getMovieHistory = async (
     movieId: number
@@ -457,7 +493,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       throw e;
     }
   }
-  public removeMovie = async (tmdbId: number): Promise<void> => {
+  public async removeMovie(tmdbId: number): Promise<void> {
     const { id, title } = await this.getMovieByTmdbId(tmdbId);
 
     if (!id) {
@@ -468,11 +504,9 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     }
 
     try {
-      await this.axios.delete(`/movie/${id}`, {
-        params: {
-          deleteFiles: true,
-          addImportExclusion: false,
-        },
+      await this.deleteMovieById(id, {
+        deleteFiles: true,
+        addImportExclusion: false,
       });
       logger.info(`[Radarr] Removed movie ${title}`);
     } catch (e) {
@@ -484,7 +518,7 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       }
       throw e;
     }
-  };
+  }
 
   public clearCache = ({
     tmdbId,

@@ -2,6 +2,7 @@ import { Notification } from '@server/lib/notifications';
 import PushoverAgent from '@server/lib/notifications/agents/pushover';
 import logger from '@server/logger';
 import type { AxiosResponse } from 'axios';
+import axios from 'axios';
 import ServarrBase from './base';
 
 const NEW_SERIES_REFRESH_ATTEMPTS = 40;
@@ -148,6 +149,41 @@ class SonarrAPI extends ServarrBase<{
         { cause: e }
       );
     }
+  }
+
+  public async getSeriesIfExists(id: number): Promise<SonarrSeries | null> {
+    try {
+      return await this.getSeriesById(id);
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        axios.isAxiosError(e.cause) &&
+        e.cause.response?.status === 404
+      ) {
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  public async deleteSeriesById(
+    id: number,
+    options: { deleteFiles: boolean; addImportExclusion: boolean }
+  ): Promise<'removed' | 'missing'> {
+    try {
+      await this.axios.delete(`/series/${id}`, { params: options });
+      this.removeCache(`/series/${id}`);
+      return 'removed';
+    } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 404) {
+        return 'missing';
+      }
+      throw e;
+    }
+  }
+
+  public async getQueueForCancellation() {
+    return this.getQueue();
   }
 
   public async getSeriesByTitle(title: string): Promise<SonarrSeries[]> {
@@ -707,7 +743,7 @@ class SonarrAPI extends ServarrBase<{
 
     return newSeasons;
   }
-  public removeSeries = async (tvdbId: number): Promise<void> => {
+  public async removeSeries(tvdbId: number): Promise<void> {
     const { id, title } = await this.getSeriesByTvdbId(tvdbId);
 
     if (!id) {
@@ -718,11 +754,9 @@ class SonarrAPI extends ServarrBase<{
     }
 
     try {
-      await this.axios.delete(`/series/${id}`, {
-        params: {
-          deleteFiles: true,
-          addImportExclusion: false,
-        },
+      await this.deleteSeriesById(id, {
+        deleteFiles: true,
+        addImportExclusion: false,
       });
       logger.info(`[Sonarr] Removed series ${title}`);
     } catch (e) {
@@ -734,7 +768,7 @@ class SonarrAPI extends ServarrBase<{
       }
       throw e;
     }
-  };
+  }
 
   public clearCache = ({
     tvdbId,
