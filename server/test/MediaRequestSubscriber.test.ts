@@ -13,7 +13,7 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
-import { getRepository } from '@server/datasource';
+import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
@@ -276,7 +276,10 @@ describe('MediaRequestSubscriber.sendToSonarr', () => {
       requestedSeasonStatus: MediaStatus.UNKNOWN,
     });
 
-    await new MediaRequestSubscriber().sendToSonarr(request);
+    await new MediaRequestSubscriber().sendToSonarr(
+      request,
+      dataSource.manager
+    );
 
     assert.equal(request.status, MediaRequestStatus.APPROVED);
     assert.equal(request.seasons[0].status, MediaRequestStatus.APPROVED);
@@ -289,7 +292,10 @@ describe('MediaRequestSubscriber.sendToSonarr', () => {
       requestedSeasonStatus: MediaStatus.AVAILABLE,
     });
 
-    await new MediaRequestSubscriber().sendToSonarr(request);
+    await new MediaRequestSubscriber().sendToSonarr(
+      request,
+      dataSource.manager
+    );
 
     assert.equal(request.status, MediaRequestStatus.COMPLETED);
     assert.equal(request.seasons[0].status, MediaRequestStatus.COMPLETED);
@@ -323,7 +329,10 @@ describe('MediaRequestSubscriber.updateParentStatus', () => {
       ],
     });
 
-    await new MediaRequestSubscriber().updateParentStatus(request);
+    await new MediaRequestSubscriber().updateParentStatus(
+      dataSource.manager,
+      request
+    );
 
     const updated = await mediaRepository.findOneOrFail({
       where: { id: media.id },
@@ -360,7 +369,10 @@ describe('MediaRequestSubscriber.updateParentStatus', () => {
       ],
     });
 
-    await new MediaRequestSubscriber().updateParentStatus(request);
+    await new MediaRequestSubscriber().updateParentStatus(
+      dataSource.manager,
+      request
+    );
 
     const updated = await mediaRepository.findOneOrFail({
       where: { id: media.id },
@@ -404,7 +416,10 @@ describe('MediaRequestSubscriber.updateParentStatus', () => {
       ],
     });
 
-    await new MediaRequestSubscriber().updateParentStatus(request);
+    await new MediaRequestSubscriber().updateParentStatus(
+      dataSource.manager,
+      request
+    );
 
     const updated = await mediaRepository.findOneOrFail({
       where: { id: media.id },

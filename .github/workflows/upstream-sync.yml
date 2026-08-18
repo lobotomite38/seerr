@@ -11,6 +11,10 @@ on:
         description: 'Test the Sonarr adapter review alert (no sync).'
         required: false
         default: 'false'
+      sync_failure_test:
+        description: 'Test the actionable upstream-sync failure warning (no sync).'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -29,7 +33,7 @@ env:
 
 jobs:
   sync:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pushover_test != 'true' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.pushover_test != 'true' && inputs.sync_failure_test != 'true') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout fork
@@ -58,6 +62,12 @@ jobs:
           set -euo pipefail
           previous_ref="origin/${FORK_BRANCH}"
           upstream_ref="upstream/${UPSTREAM_BRANCH}"
+
+          if [ "$(git rev-parse "$previous_ref")" = "$(git rev-parse "$upstream_ref")" ]; then
+            echo "UPSTREAM_ADVANCED=false" >> "$GITHUB_ENV"
+          else
+            echo "UPSTREAM_ADVANCED=true" >> "$GITHUB_ENV"
+          fi
 
           if git diff --quiet "${previous_ref}..${upstream_ref}" -- server/api/servarr/sonarr.ts; then
             echo "UPSTREAM_SONARR_ADAPTER_CHANGED=false" >> "$GITHUB_ENV"
@@ -164,22 +174,30 @@ jobs:
             exit 0
           fi
 
+          # Alert immediately for a newly observed upstream revision, then once
+          # daily while the same conflict remains unresolved.
+          if [ "${UPSTREAM_ADVANCED:-false}" != 'true' ] && [ "$(date -u +%H)" != '12' ]; then
+            echo "Sync conflict already alerted; next Pushover reminder is at 12:17 UTC."
+            exit 0
+          fi
+
           curl --fail-with-body -sS \
             --form-string "token=$PUSHOVER_APP_TOKEN" \
             --form-string "user=$PUSHOVER_USER_KEY" \
-            --form-string "title=Seerr sync failed" \
-            --form-string "message=Upstream sync failed for $GITHUB_REPOSITORY. Conflicts: ${SYNC_CONFLICT_FILES:-unknown}. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --form-string "title=ACTION REQUIRED · Seerr upstream sync blocked" \
+            --form-string "message=Why: upstream Seerr cannot merge cleanly into our custom branch. Conflicts: ${SYNC_CONFLICT_FILES:-unknown}. What to do: ask Codex to diagnose and repair the Sync from upstream (develop) run before deploying. Details: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --form-string "priority=1" \
             https://api.pushover.net/1/messages.json
 
   pushover-test:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.pushover_test == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.pushover_test == 'true' || inputs.sync_failure_test == 'true') }}
     runs-on: ubuntu-24.04
     steps:
       - name: Send Pushover test notification
         env:
           PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
           PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+          SYNC_FAILURE_TEST: ${{ inputs.sync_failure_test }}
         shell: bash
         run: |
           if [ -z "$PUSHOVER_USER_KEY" ] || [ -z "$PUSHOVER_APP_TOKEN" ]; then
@@ -187,18 +205,24 @@ jobs:
             exit 1
           fi
 
-          message="$(cat <<EOF
+          if [ "$SYNC_FAILURE_TEST" = 'true' ]; then
+            title='TEST · Seerr upstream sync warning'
+            message='TEST ONLY - no action is required now. A real warning means upstream Seerr cannot merge cleanly into our custom branch. Ask Codex to diagnose and repair the Sync from upstream (develop) run before deploying.'
+          else
+            title='Seerr Sonarr review test'
+            message="$(cat <<EOF
           TEST ONLY - no action is required now.
 
           A real alert means upstream Seerr changed the Sonarr adapter that overlaps our local season-scoped fix for duplicate whole-series searches.
 
           When real: do not deploy; ask Codex to reconcile the upstream and local implementations, keep the regression tests, and run the targeted test, server typecheck, lint, and build before deployment.
           EOF
-          )"
+            )"
+          fi
 
           curl --fail-with-body -sS \
             --form-string "token=$PUSHOVER_APP_TOKEN" \
             --form-string "user=$PUSHOVER_USER_KEY" \
-            --form-string "title=Seerr Sonarr review test" \
+            --form-string "title=$title" \
             --form-string "message=$message" \
             https://api.pushover.net/1/messages.json
