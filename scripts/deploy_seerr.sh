@@ -13,7 +13,7 @@ NODE_OPTIONS="--max-old-space-size=8192"
 LOG_DIR="/config/lobotomite/logs"
 LOG_FILE="$LOG_DIR/seerr_deploy.log"
 STATE_FILE="$TARGET_DIR/.deployed-commit"
-LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/seerr_deploy.lock"
+LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/seerr_deploy.singleton.lock"
 BRANCH_NAME="lobotomite-seerr"
 
 trigger="manual"

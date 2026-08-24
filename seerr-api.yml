@@ -7314,6 +7314,10 @@ paths:
             example: 0
         - in: query
           name: filter
+          description: >-
+            Filters media by availability state. `allavailable` includes items
+            whose standard or 4K status is `AVAILABLE` or
+            `PARTIALLY_AVAILABLE`.
           schema:
             type: string
             nullable: true

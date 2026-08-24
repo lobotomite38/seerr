@@ -91,6 +91,89 @@ async function loginAsAdmin() {
   }
 }
 
+describe('GET /media', () => {
+  const saveMedia = async () =>
+    getRepository(Media).save([
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99101,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        mediaAddedAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 99102,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.PARTIALLY_AVAILABLE,
+        mediaAddedAt: new Date('2026-01-02T00:00:00.000Z'),
+      }),
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99103,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.PENDING,
+        mediaAddedAt: new Date('2026-01-03T00:00:00.000Z'),
+      }),
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 99104,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        mediaAddedAt: new Date('2026-01-04T00:00:00.000Z'),
+      }),
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99105,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.AVAILABLE,
+        mediaAddedAt: new Date('2026-01-05T00:00:00.000Z'),
+      }),
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 99106,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.AVAILABLE,
+        mediaAddedAt: new Date('2026-01-06T00:00:00.000Z'),
+      }),
+    ]);
+
+  it('includes available and partially available media from either quality', async () => {
+    await saveMedia();
+
+    const res = await request(app).get(
+      '/media?filter=allavailable&sort=mediaAdded&take=20'
+    );
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.pageInfo.results, 5);
+    assert.deepStrictEqual(
+      res.body.results.map((media: { tmdbId: number }) => media.tmdbId),
+      [99106, 99105, 99104, 99102, 99101]
+    );
+  });
+
+  it('preserves media-added ordering and pagination for both qualities', async () => {
+    await saveMedia();
+
+    const res = await request(app).get(
+      '/media?filter=allavailable&sort=mediaAdded&take=2&skip=2'
+    );
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body.pageInfo, {
+      pages: 3,
+      pageSize: 2,
+      results: 5,
+      page: 2,
+    });
+    assert.deepStrictEqual(
+      res.body.results.map((media: { tmdbId: number }) => media.tmdbId),
+      [99104, 99102]
+    );
+  });
+});
+
 describe('DELETE /media/:id/file', () => {
   it('audits the destructive removal and sends one owner-routed Pushover', async (t) => {
     const media = await getRepository(Media).save(

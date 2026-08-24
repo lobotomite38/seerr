@@ -29,6 +29,10 @@ mediaRoutes.get('/', async (req, res, next) => {
 
   const pageSize = req.query.take ? Number(req.query.take) : 20;
   const skip = req.query.skip ? Number(req.query.skip) : 0;
+  const availableStatuses = [
+    MediaStatus.AVAILABLE,
+    MediaStatus.PARTIALLY_AVAILABLE,
+  ];
 
   let statusFilter = undefined;
 
@@ -38,12 +42,6 @@ mediaRoutes.get('/', async (req, res, next) => {
       break;
     case 'partial':
       statusFilter = MediaStatus.PARTIALLY_AVAILABLE;
-      break;
-    case 'allavailable':
-      statusFilter = In([
-        MediaStatus.AVAILABLE,
-        MediaStatus.PARTIALLY_AVAILABLE,
-      ]);
       break;
     case 'processing':
       statusFilter = MediaStatus.PROCESSING;
@@ -70,7 +68,23 @@ mediaRoutes.get('/', async (req, res, next) => {
   }
 
   let whereClause: FindOneOptions<Media>['where'];
-  if (statusFilter || req.query.sort === 'mediaAdded') {
+  if (req.query.filter === 'allavailable') {
+    const mediaAddedFilter =
+      req.query.sort === 'mediaAdded'
+        ? { mediaAddedAt: Not(IsNull()) }
+        : undefined;
+
+    whereClause = [
+      {
+        status: In(availableStatuses),
+        ...mediaAddedFilter,
+      },
+      {
+        status4k: In(availableStatuses),
+        ...mediaAddedFilter,
+      },
+    ];
+  } else if (statusFilter || req.query.sort === 'mediaAdded') {
     whereClause = {};
     if (statusFilter) whereClause.status = statusFilter;
     if (req.query.sort === 'mediaAdded')
