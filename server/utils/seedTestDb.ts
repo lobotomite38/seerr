@@ -8,6 +8,8 @@ export interface SeedDbOptions {
   preserveDb?: boolean;
   /** If true, runs migrations instead of synchronizing schema */
   withMigrations?: boolean;
+  /** If true, permits seeding outside NODE_ENV=test, but never in production */
+  allowOutsideTest?: boolean;
 }
 
 // Precomputed bcrypt hash of 'test1234'. We precompute this to avoid
@@ -15,8 +17,9 @@ export interface SeedDbOptions {
 const TEST_USER_PASSWORD_HASH =
   '$2b$12$Z5V2P5HZgmx4/AnWFMZN1.aD5AM1NucNi.mhNTSQ9oVtmdzu7Le/a';
 
-function assertTestDbAccess(action: string): void {
-  const isExplicitlyAllowed = process.env.ALLOW_TEST_DB_RESET === 'true';
+function assertTestDbAccess(action: string, allowOutsideTest = false): void {
+  const isExplicitlyAllowed =
+    allowOutsideTest || process.env.ALLOW_TEST_DB_RESET === 'true';
   const isTestRuntime = process.env.NODE_ENV === 'test';
   const database =
     dataSource.options.type === 'sqlite' ? dataSource.options.database : '';
@@ -97,7 +100,7 @@ async function seedTestUsers(): Promise<void> {
  * Used by both Cypress tests and Vitest unit tests.
  */
 export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
-  assertTestDbAccess('seed the test database');
+  assertTestDbAccess('seed the test database', options.allowOutsideTest);
 
   const dbConnection = dataSource.isInitialized
     ? dataSource
