@@ -491,6 +491,13 @@ requestRoutes.put<{ requestId: string }>(
         });
       }
 
+      if (request.status !== MediaRequestStatus.PENDING) {
+        return next({
+          status: 409,
+          message: 'Only pending requests can be modified.',
+        });
+      }
+
       let requestUser = request.requestedBy;
 
       if (
@@ -684,6 +691,13 @@ requestRoutes.post<{
         relations: { requestedBy: true, modifiedBy: true },
       });
 
+      if (request.status !== MediaRequestStatus.FAILED) {
+        return next({
+          status: 409,
+          message: 'Only failed requests can be retried.',
+        });
+      }
+
       // this also triggers updating the parent media's status & sending to *arr
       request.status = MediaRequestStatus.APPROVED;
       request.modifiedBy = req.user;
@@ -702,7 +716,7 @@ requestRoutes.post<{
 
 requestRoutes.post<{
   requestId: string;
-  status: 'pending' | 'approve' | 'decline';
+  status: 'approve' | 'decline';
 }>(
   '/:requestId/:status',
   isAuthenticated(Permission.MANAGE_REQUESTS),
@@ -718,15 +732,24 @@ requestRoutes.post<{
       let newStatus: MediaRequestStatus;
 
       switch (req.params.status) {
-        case 'pending':
-          newStatus = MediaRequestStatus.PENDING;
-          break;
         case 'approve':
           newStatus = MediaRequestStatus.APPROVED;
           break;
         case 'decline':
           newStatus = MediaRequestStatus.DECLINED;
           break;
+        default:
+          return next({
+            status: 400,
+            message: 'Status must be approve or decline.',
+          });
+      }
+
+      if (request.status !== MediaRequestStatus.PENDING) {
+        return next({
+          status: 409,
+          message: 'Only pending requests can be approved or declined.',
+        });
       }
 
       request.status = newStatus;
