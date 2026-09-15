@@ -81,6 +81,54 @@ describe('RadarrAPI.addMovie', () => {
     });
   });
 
+  it('keeps polling after a transient recovery lookup failure', async () => {
+    const api = buildRadarr();
+    Object.assign(api, {
+      addRecoveryPollAttempts: 2,
+      addRecoveryPollIntervalMs: 0,
+    });
+    const addedMovie = buildMovie();
+    const axios = getAxios(api);
+    let installedLookupAttempts = 0;
+    const get = mock.method(axios, 'get', async (url: string) => {
+      if (url === '/movie/lookup') {
+        return { data: [buildMovie({ id: 0, monitored: false })] };
+      }
+      installedLookupAttempts += 1;
+      if (installedLookupAttempts === 1) {
+        throw new Error('timeout of 10000ms exceeded');
+      }
+      return { data: [addedMovie] };
+    });
+    const post = mock.method(axios, 'post', async (url: string) => {
+      if (url === '/movie') {
+        throw new Error('timeout of 10000ms exceeded');
+      }
+      return { data: { id: 993, name: 'MoviesSearch' } };
+    });
+
+    const movie = await api.addMovie({
+      title: addedMovie.title,
+      tmdbId: addedMovie.tmdbId,
+      qualityProfileId: addedMovie.qualityProfileId,
+      profileId: addedMovie.profileId,
+      year: 2010,
+      minimumAvailability: 'inCinemas',
+      rootFolderPath: '/movies',
+      tags: [],
+      monitored: true,
+      searchNow: true,
+    });
+
+    assert.strictEqual(movie.id, addedMovie.id);
+    assert.strictEqual(installedLookupAttempts, 2);
+    assert.deepStrictEqual(
+      get.mock.calls.map((call) => call.arguments[0]),
+      ['/movie/lookup', '/movie', '/movie']
+    );
+    assert.strictEqual(post.mock.callCount(), 2);
+  });
+
   it('still throws when the movie was not installed before the timeout', async () => {
     const api = buildRadarr();
     useImmediateRecovery(api);

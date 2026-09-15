@@ -113,14 +113,21 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   private async pollInstalledMovieByTmdbId(
     tmdbId: number
   ): Promise<RadarrMovie | null> {
+    let lastLookupError: unknown;
+
     for (
       let attempt = 0;
       attempt < this.addRecoveryPollAttempts;
       attempt += 1
     ) {
-      const movie = await this.findInstalledMovieByTmdbId(tmdbId);
-      if (movie) {
-        return movie;
+      try {
+        const movie = await this.findInstalledMovieByTmdbId(tmdbId);
+        if (movie) {
+          return movie;
+        }
+        lastLookupError = undefined;
+      } catch (error) {
+        lastLookupError = error;
       }
       if (attempt + 1 < this.addRecoveryPollAttempts) {
         await new Promise((resolve) =>
@@ -128,6 +135,11 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
         );
       }
     }
+
+    if (lastLookupError) {
+      throw lastLookupError;
+    }
+
     return null;
   }
 
