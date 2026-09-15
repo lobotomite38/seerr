@@ -1156,6 +1156,100 @@ describe('AvailabilitySync', () => {
   });
 
   describe('TV season availability - Plex', () => {
+    it('preserves standard season availability when Sonarr times out', async () => {
+      configurePlex();
+      configureSonarr([{ syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 386;
+      media.tvdbId = 75885;
+      media.mediaType = MediaType.TV;
+      media.status = MediaStatus.AVAILABLE;
+      media.status4k = MediaStatus.UNKNOWN;
+      media.externalServiceId = 47;
+      media.serviceId = 0;
+      media.seasons = [1, 2, 3].map(
+        (seasonNumber) =>
+          new Season({
+            seasonNumber,
+            status: MediaStatus.AVAILABLE,
+            status4k: MediaStatus.UNKNOWN,
+          })
+      );
+      await mediaRepository.save(media);
+
+      getSeriesByIdImpl = async () => {
+        throw new Error(
+          '[Sonarr] Failed to retrieve series by ID: timeout of 10000ms exceeded'
+        );
+      };
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 386 },
+        relations: ['seasons'],
+      });
+
+      assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
+      for (const season of updated.seasons) {
+        assert.strictEqual(
+          season.status,
+          MediaStatus.AVAILABLE,
+          `Season ${season.seasonNumber} should remain AVAILABLE after a transient Sonarr failure`
+        );
+      }
+    });
+
+    it('preserves 4K season availability when Sonarr times out', async () => {
+      configurePlex();
+      configureSonarr([{ is4k: true, syncEnabled: true }]);
+
+      const mediaRepository = getRepository(Media);
+
+      const media = new Media();
+      media.tmdbId = 387;
+      media.tvdbId = 75886;
+      media.mediaType = MediaType.TV;
+      media.status = MediaStatus.UNKNOWN;
+      media.status4k = MediaStatus.AVAILABLE;
+      media.externalServiceId4k = 48;
+      media.serviceId4k = 0;
+      media.seasons = [1, 2, 3].map(
+        (seasonNumber) =>
+          new Season({
+            seasonNumber,
+            status: MediaStatus.UNKNOWN,
+            status4k: MediaStatus.AVAILABLE,
+          })
+      );
+      await mediaRepository.save(media);
+
+      getSeriesByIdImpl = async () => {
+        throw new Error(
+          '[Sonarr] Failed to retrieve series by ID: timeout of 10000ms exceeded'
+        );
+      };
+
+      await availabilitySync.run();
+
+      const updated = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 387 },
+        relations: ['seasons'],
+      });
+
+      assert.strictEqual(updated.status4k, MediaStatus.AVAILABLE);
+      for (const season of updated.seasons) {
+        assert.strictEqual(
+          season.status4k,
+          MediaStatus.AVAILABLE,
+          `Season ${season.seasonNumber} should remain AVAILABLE after a transient Sonarr failure`
+        );
+      }
+    });
+
     it('should mark deleted seasons when Plex returns empty season metadata entries', async () => {
       configurePlex();
       configureSonarr([{ syncEnabled: true }]);

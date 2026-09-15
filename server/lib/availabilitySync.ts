@@ -840,7 +840,19 @@ class AvailabilitySync {
     // we will have to prevent the season check from happening
     const seasonsMap: Map<number, boolean> = new Map();
 
-    if (!preventSeasonSearch) {
+    if (preventSeasonSearch) {
+      // A transient Sonarr failure means season existence is unknown, not
+      // absent. Preserve the last confirmed available state so the final
+      // cross-source map cannot turn a temporary API timeout into deletion.
+      media.seasons
+        .filter(
+          (season) =>
+            season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
+            season[is4k ? 'status4k' : 'status'] ===
+              MediaStatus.PARTIALLY_AVAILABLE
+        )
+        .forEach((season) => seasonsMap.set(season.seasonNumber, true));
+    } else {
       const filteredSeasons = media.seasons.filter(
         (season) =>
           season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
