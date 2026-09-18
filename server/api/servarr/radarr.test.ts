@@ -38,6 +38,39 @@ const useImmediateRecovery = (radarr: RadarrAPI): void => {
 describe('RadarrAPI.addMovie', () => {
   afterEach(() => mock.restoreAll());
 
+  it('refreshes an installed lookup result before deciding to search', async () => {
+    const api = buildRadarr();
+    const axios = getAxios(api);
+    const installedMovie = buildMovie({ hasFile: true });
+    const get = mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ hasFile: false })]
+          : installedMovie,
+    }));
+    const post = mock.method(axios, 'post', async () => ({ data: {} }));
+
+    const movie = await api.addMovie({
+      title: installedMovie.title,
+      tmdbId: installedMovie.tmdbId,
+      qualityProfileId: installedMovie.qualityProfileId,
+      profileId: installedMovie.profileId,
+      year: 2010,
+      minimumAvailability: 'inCinemas',
+      rootFolderPath: '/movies',
+      tags: [],
+      monitored: true,
+      searchNow: true,
+    });
+
+    assert.strictEqual(movie.hasFile, true);
+    assert.deepStrictEqual(
+      get.mock.calls.map((call) => call.arguments[0]),
+      ['/movie/lookup', `/movie/${installedMovie.id}`]
+    );
+    assert.strictEqual(post.mock.callCount(), 0);
+  });
+
   it('recovers when Radarr times out after the movie was added', async () => {
     const api = buildRadarr();
     useImmediateRecovery(api);

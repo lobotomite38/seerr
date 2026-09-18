@@ -319,7 +319,14 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   ): Promise<RadarrMovie> => {
     let mutationMayHavePersisted = false;
     try {
-      const movie = await this.getMovieByTmdbId(options.tmdbId);
+      let movie = await this.getMovieByTmdbId(options.tmdbId);
+
+      // Radarr's lookup result can lag the installed library record after an
+      // import. Refresh an installed ID before deciding that it is fileless
+      // and launching a redundant search.
+      if (movie.id) {
+        movie = await this.getMovie({ id: movie.id });
+      }
 
       if (movie.hasFile) {
         logger.info(
