@@ -74,7 +74,10 @@ export interface RadarrHistoryRecord {
 }
 
 class RadarrAPI extends ServarrBase<{ movieId: number }> {
-  protected addRecoveryPollAttempts = 6;
+  // Radarr can serialize new-movie refreshes behind an existing search. Keep
+  // the recovery bounded, but allow enough time for that queued add to become
+  // visible after the initial API timeout.
+  protected addRecoveryPollAttempts = 16;
   protected addRecoveryPollIntervalMs = 1000;
 
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
