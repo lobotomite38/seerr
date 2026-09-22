@@ -406,8 +406,10 @@ const MovieRequestModal = ({
           hasPermission(Permission.MANAGE_REQUESTS)) && (
           <AdvancedRequester
             type="movie"
+            tmdbId={tmdbId}
             is4k={is4k}
             requestUser={editRequest.requestedBy}
+            requestId={editRequest.id}
             defaultOverrides={{
               folder: editRequest.rootFolder,
               profile: editRequest.profileId,
@@ -481,6 +483,7 @@ const MovieRequestModal = ({
             hasPermission(Permission.MANAGE_REQUESTS)) && (
             <AdvancedRequester
               type="movie"
+              tmdbId={tmdbId}
               is4k={is4k}
               quota={quota}
               onChange={(overrides) => {
