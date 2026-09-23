@@ -14,7 +14,11 @@ import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
-import requestLock from '@server/utils/requestLock';
+import requestLock, {
+  mediaKey,
+  mediaLock,
+  userKey,
+} from '@server/utils/requestLock';
 import { truncate } from 'lodash';
 import {
   AfterInsert,
@@ -51,8 +55,22 @@ export class MediaRequest {
     user: User,
     options: MediaRequestOptions = {}
   ): Promise<MediaRequest> {
-    return requestLock.dispatch(requestBody.userId || user.id, () =>
-      MediaRequest.createRequest(requestBody, user, options)
+    // is4k is optional, and an undefined one binds as null in the duplicate query
+    const body = { ...requestBody, is4k: !!requestBody.is4k };
+
+    // Only a caller allowed to set the request user may queue on their lock
+    const lockUserId =
+      body.userId &&
+      user.hasPermission([Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS])
+        ? body.userId
+        : user.id;
+
+    // No is4k in the key: one media row holds both statuses, so a 4k and a
+    // non-4k request for the same title race to create it
+    return requestLock.dispatch(userKey(lockUserId), () =>
+      mediaLock.dispatch(mediaKey(body.mediaType, body.mediaId), () =>
+        MediaRequest.createRequest(body, user, options)
+      )
     );
   }
 
