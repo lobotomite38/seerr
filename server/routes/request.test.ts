@@ -261,13 +261,13 @@ async function seedRequest(status = MediaRequestStatus.PENDING) {
   });
 }
 
-async function grantFriendRequestPermissions() {
+async function grantDemoRequestPermissions() {
   const userRepo = getRepository(User);
-  const friend = await userRepo.findOneOrFail({
-    where: { email: 'friend@seerr.dev' },
+  const demoUser = await userRepo.findOneOrFail({
+    where: { email: 'demo@seerr.dev' },
   });
 
-  friend.permissions =
+  demoUser.permissions =
     Permission.REQUEST |
     Permission.REQUEST_MOVIE |
     Permission.REQUEST_TV |
@@ -275,7 +275,7 @@ async function grantFriendRequestPermissions() {
     Permission.REQUEST_4K_MOVIE |
     Permission.REQUEST_4K_TV;
 
-  await userRepo.save(friend);
+  await userRepo.save(demoUser);
 }
 
 async function seedMovieMedia({
@@ -326,7 +326,7 @@ describe('POST /request opposite quality request block', () => {
 
   for (const [index, oppositeStatus] of blockedStatuses.entries()) {
     it(`blocks a non-owner movie 4K request when 1080p status is ${MediaStatus[oppositeStatus]}`, async () => {
-      await grantFriendRequestPermissions();
+      await grantDemoRequestPermissions();
       const tmdbId = 70010 + index;
       await seedMovieMedia({
         tmdbId,
@@ -334,7 +334,7 @@ describe('POST /request opposite quality request block', () => {
         status4k: MediaStatus.UNKNOWN,
       });
 
-      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
       const res = await agent.post('/request').send({
         mediaType: MediaType.MOVIE,
         mediaId: tmdbId,
@@ -349,7 +349,7 @@ describe('POST /request opposite quality request block', () => {
     });
 
     it(`blocks a non-owner movie 1080p request when 4K status is ${MediaStatus[oppositeStatus]}`, async () => {
-      await grantFriendRequestPermissions();
+      await grantDemoRequestPermissions();
       const tmdbId = 70020 + index;
       await seedMovieMedia({
         tmdbId,
@@ -357,7 +357,7 @@ describe('POST /request opposite quality request block', () => {
         status4k: oppositeStatus,
       });
 
-      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
       const res = await agent.post('/request').send({
         mediaType: MediaType.MOVIE,
         mediaId: tmdbId,
@@ -377,8 +377,8 @@ describe('POST /request opposite quality request block', () => {
     MediaStatus.DELETED,
   ].entries()) {
     it(`allows both request directions when the opposite status is ${MediaStatus[oppositeStatus]}`, async () => {
-      await grantFriendRequestPermissions();
-      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      await grantDemoRequestPermissions();
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
       const request4kId = 70030 + index * 2;
       const request1080pId = request4kId + 1;
       await seedMovieMedia({ tmdbId: request4kId, status: oppositeStatus });
@@ -511,7 +511,7 @@ describe('POST /request opposite quality request block', () => {
   });
 
   it('blocks TV requests only when a selected season is available in the opposite quality', async () => {
-    await grantFriendRequestPermissions();
+    await grantDemoRequestPermissions();
     await seedTvMedia({
       tmdbId: 70006,
       seasons: [
@@ -528,7 +528,7 @@ describe('POST /request opposite quality request block', () => {
       ],
     });
 
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
     const allowed = await agent.post('/request').send({
       mediaType: MediaType.TV,
       mediaId: 70006,
@@ -703,7 +703,7 @@ async function seedUser(
   return userRepo.save(user);
 }
 
-async function seedTvMedia(tmdbId: number) {
+async function seedPendingTvMedia(tmdbId: number) {
   const mediaRepo = getRepository(Media);
 
   return (
@@ -725,7 +725,7 @@ async function seedMediaSeasons(
   tmdbId: number,
   seasons: { seasonNumber: number; status: MediaStatus }[]
 ) {
-  const media = await seedTvMedia(tmdbId);
+  const media = await seedPendingTvMedia(tmdbId);
   media.seasons = seasons.map(
     ({ seasonNumber, status }) =>
       new Season({ seasonNumber, status, status4k: MediaStatus.UNKNOWN })
@@ -743,7 +743,7 @@ async function seedTvRequest(
     new MediaRequest({
       type: MediaType.TV,
       status: MediaRequestStatus.PENDING,
-      media: await seedTvMedia(tmdbId),
+      media: await seedPendingTvMedia(tmdbId),
       requestedBy,
       is4k: false,
       ignoreQuota,
@@ -1631,7 +1631,7 @@ describe('POST /request/:requestId/cancel', () => {
     type = MediaType.MOVIE,
     is4k = false,
     status = MediaRequestStatus.APPROVED,
-    ownerEmail = 'friend@seerr.dev',
+    ownerEmail = 'demo@seerr.dev',
     tmdbId = 88001,
   }: {
     type?: MediaType;
@@ -1763,7 +1763,7 @@ describe('POST /request/:requestId/cancel', () => {
       async () => true
     );
 
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
     assert.strictEqual(res.status, 200);
@@ -1807,7 +1807,7 @@ describe('POST /request/:requestId/cancel', () => {
       'deleteMovieById',
       async () => 'removed' as const
     );
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
 
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -1824,7 +1824,7 @@ describe('POST /request/:requestId/cancel', () => {
       'getMovieIfExists',
       async () => movie()
     );
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
 
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -1888,7 +1888,7 @@ describe('POST /request/:requestId/cancel', () => {
         'deleteMovieById',
         async () => 'removed' as const
       );
-      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
 
       const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -1915,7 +1915,7 @@ describe('POST /request/:requestId/cancel', () => {
       'deleteMovieById',
       async () => 'removed' as const
     );
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
 
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -1939,7 +1939,7 @@ describe('POST /request/:requestId/cancel', () => {
     t.mock.method(RadarrAPI.prototype, 'deleteMovieById', async () => {
       throw new Error('Radarr unavailable');
     });
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
 
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -1973,7 +1973,7 @@ describe('POST /request/:requestId/cancel', () => {
       'deleteSeriesById',
       async () => 'removed' as const
     );
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
 
     const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -2034,7 +2034,7 @@ describe('POST /request/:requestId/cancel', () => {
         'deleteSeriesById',
         async () => 'removed' as const
       );
-      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
 
       const res = await agent.post(`/request/${mediaRequest.id}/cancel`);
 
@@ -2061,8 +2061,8 @@ describe('POST /request/:requestId/cancel', () => {
       'deleteMovieById',
       async () => 'removed' as const
     );
-    const first = await loginAs('friend@seerr.dev', 'test1234');
-    const second = await loginAs('friend@seerr.dev', 'test1234');
+    const first = await loginAs('demo@seerr.dev', 'test1234');
+    const second = await loginAs('demo@seerr.dev', 'test1234');
 
     const responses = await Promise.all([
       first.post(`/request/${mediaRequest.id}/cancel`),
@@ -2249,6 +2249,73 @@ describe('POST /request (tv), override rules', () => {
 
     assert.strictEqual(res.status, 201);
     assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('POST /request, override rules and requester choices', () => {
+  async function requestWithRule(permissions: number) {
+    configureRadarr([{ id: 1, isDefault: true, is4k: false }]);
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const requester = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+    requester.permissions = permissions;
+    await userRepo.save(requester);
+
+    await getRepository(OverrideRule).save(
+      new OverrideRule({
+        radarrServiceId: 1,
+        rootFolder: '/rule',
+        profileId: 7,
+        tags: '2',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    return agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88010,
+      serverId: 1,
+      rootFolder: '/chosen',
+      tags: [],
+    });
+  }
+
+  it('keeps what an advanced requester sets and fills the rest from the rule', async () => {
+    const res = await requestWithRule(
+      Permission.REQUEST | Permission.REQUEST_ADVANCED
+    );
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/chosen');
+    assert.strictEqual(res.body.profileId, 7);
+    assert.deepStrictEqual(res.body.tags, []);
+  });
+
+  it('keeps what a request manager sets and fills the rest from the rule', async (t) => {
+    // Manage Requests auto-approves; keep it from calling Radarr
+    t.mock.method(
+      MediaRequestSubscriber.prototype,
+      'sendToRadarr',
+      async () => undefined
+    );
+    const res = await requestWithRule(
+      Permission.REQUEST | Permission.MANAGE_REQUESTS
+    );
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/chosen');
+    assert.strictEqual(res.body.profileId, 7);
+    assert.deepStrictEqual(res.body.tags, []);
+  });
+
+  it('applies the rule over what a regular requester sets', async () => {
+    const res = await requestWithRule(Permission.REQUEST);
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/rule');
   });
 });
 
