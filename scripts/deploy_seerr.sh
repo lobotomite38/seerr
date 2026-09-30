@@ -190,7 +190,7 @@ log "Build complete. Restarting tmux session '$SESSION_NAME'."
 {
   tmux kill-session -t "$SESSION_NAME" >/dev/null 2>&1 || true
   tmux new-session -d -s "$SESSION_NAME" \
-    "cd $TARGET_DIR && exec env CONFIG_DIRECTORY=$CONFIG_DIRECTORY PORT=$PORT NODE_ENV=production NODE_OPTIONS=$NODE_OPTIONS $NODE_BIN dist/index.js >>/config/lobotomite/logs/seerr_runtime.log 2>&1"
+    "cd $TARGET_DIR && exec env CONFIG_DIRECTORY=$CONFIG_DIRECTORY PORT=$PORT NODE_ENV=production NODE_OPTIONS=$NODE_OPTIONS /usr/bin/python3 /mnt/mpathae/lobotomite/scripts/seerr_runtime.py $NODE_BIN >>/config/lobotomite/logs/seerr_runtime.log 2>&1"
 } 9>&-
 
 for _ in 1 2 3 4 5; do
