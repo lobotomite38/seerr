@@ -112,6 +112,7 @@ on_deploy_exit() {
   local line_no="${1:-unknown}"
   trap - EXIT
   cleanup_candidate
+  resource_guard_cleanup
 
   if [[ "$exit_code" -eq 0 ]]; then
     return
@@ -130,6 +131,9 @@ on_deploy_exit() {
   exit "$exit_code"
 }
 trap 'on_deploy_exit "$LINENO"' EXIT
+# This entrypoint owns the composed EXIT handler. Admission must not replace
+# candidate cleanup/failure alerts with its holder-only handler.
+RESOURCE_GUARD_TRAP_INSTALLED=1
 
 if [[ -e "$FAILED_MARKER" && "$recover_accepted" != "true" ]]; then
   log "A prior Seerr transaction requires manual recovery; refusing another deployment."
