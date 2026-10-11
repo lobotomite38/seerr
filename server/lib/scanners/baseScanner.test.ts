@@ -1,150 +1,217 @@
-import { MediaStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
-import BaseScanner, {
-  type ProcessableSeason,
-} from '@server/lib/scanners/baseScanner';
+import MediaRequest from '@server/entity/MediaRequest';
+import Season from '@server/entity/Season';
+import SeasonRequest from '@server/entity/SeasonRequest';
+import { User } from '@server/entity/User';
+import type { ProcessableSeason } from '@server/lib/scanners/baseScanner';
+import BaseScanner from '@server/lib/scanners/baseScanner';
 import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 
-class TestScanner extends BaseScanner<never> {
-  public constructor() {
-    super('Test Scanner');
-  }
-
-  public start(): string {
-    return this.startRun();
-  }
-
-  public processTestShow(
-    tmdbId: number,
-    tvdbId: number,
-    seasons: ProcessableSeason[],
-    is4k: boolean
-  ): Promise<void> {
-    return this.processShow(tmdbId, tvdbId, seasons, { is4k });
-  }
-}
+mock.method(MediaRequest, 'sendNotification', async () => undefined);
 
 setupTestDb();
 
-describe('BaseScanner.processShow', () => {
-  beforeEach(() => {
-    const settings = getSettings();
-    settings.sonarr = [
-      {
-        id: 0,
-        name: '4K Sonarr',
-        hostname: 'localhost',
-        port: 8989,
-        apiKey: 'test-key',
-        useSsl: false,
-        baseUrl: '',
-        activeProfileId: 1,
-        activeProfileName: 'Test',
-        activeDirectory: '/tv/4k',
-        activeLanguageProfileId: 1,
-        tags: [],
-        is4k: true,
-        isDefault: true,
-        syncEnabled: true,
-        preventSearch: false,
-        tagRequests: false,
-        overrideRule: [],
-        seriesType: 'standard',
-        animeSeriesType: 'anime',
-        enableSeasonFolders: true,
-        monitorNewItems: 'all',
-      },
-    ];
-    settings.radarr = [];
-  });
+class HarnessScanner extends BaseScanner<unknown> {
+  public constructor(declineRequestsOnStatusReset?: boolean) {
+    super('Harness Scan');
 
-  it('preserves 4K processing while a standard scan adds library seasons', async () => {
-    const mediaRepository = getRepository(Media);
-    const media = await mediaRepository.save(
-      new Media({
-        mediaType: MediaType.TV,
-        tmdbId: 387,
-        tvdbId: 75886,
-        status: MediaStatus.UNKNOWN,
-        status4k: MediaStatus.PROCESSING,
-        seasons: [],
-      })
-    );
-    const scanner = new TestScanner();
-    scanner.start();
+    if (declineRequestsOnStatusReset !== undefined) {
+      this.declineRequestsOnStatusReset = declineRequestsOnStatusReset;
+    }
+  }
 
-    await scanner.processTestShow(
-      media.tmdbId,
-      media.tvdbId as number,
-      [
-        {
-          seasonNumber: 1,
-          episodes: 0,
-          episodes4k: 0,
-          totalEpisodes: 41,
-        },
-        {
-          seasonNumber: 2,
-          episodes: 36,
-          episodes4k: 0,
-          totalEpisodes: 36,
-        },
-      ],
-      false
-    );
-
-    const updated = await mediaRepository.findOneOrFail({
-      where: { id: media.id },
+  public async scanShow(
+    tmdbId: number,
+    seasons: ProcessableSeason[]
+  ): Promise<void> {
+    await this.processShow(tmdbId, undefined, seasons, {
+      title: 'Test Show',
     });
-    assert.equal(updated.status, MediaStatus.PARTIALLY_AVAILABLE);
-    assert.equal(updated.status4k, MediaStatus.PROCESSING);
-  });
+    await this.resolve();
+  }
 
-  it('preserves standard processing while a 4K scan adds library seasons', async () => {
-    const mediaRepository = getRepository(Media);
-    const media = await mediaRepository.save(
-      new Media({
-        mediaType: MediaType.TV,
-        tmdbId: 388,
-        tvdbId: 75887,
-        status: MediaStatus.PROCESSING,
-        status4k: MediaStatus.UNKNOWN,
-        seasons: [],
-      })
-    );
-    const scanner = new TestScanner();
-    scanner.start();
-
-    await scanner.processTestShow(
-      media.tmdbId,
-      media.tvdbId as number,
-      [
-        {
-          seasonNumber: 1,
-          episodes: 0,
-          episodes4k: 0,
-          totalEpisodes: 41,
-          is4kOverride: true,
-        },
-        {
-          seasonNumber: 2,
-          episodes: 0,
-          episodes4k: 36,
-          totalEpisodes: 36,
-          is4kOverride: true,
-        },
-      ],
-      true
-    );
-
-    const updated = await mediaRepository.findOneOrFail({
-      where: { id: media.id },
+  public scanAbandonedMovie(tmdbId: number): Promise<void> {
+    return this.processMovie(tmdbId, {
+      title: 'Test Movie',
+      processing: false,
+      hasFile: false,
     });
-    assert.equal(updated.status, MediaStatus.PROCESSING);
-    assert.equal(updated.status4k, MediaStatus.PARTIALLY_AVAILABLE);
+  }
+
+  // Most permissive resolver possible, so a survivor means nothing was recorded.
+  public resolve(): Promise<void> {
+    return this.resolveStatusResets(() => true);
+  }
+}
+
+// Identical to what plex/index.ts and jellyfin/index.ts push for a season the library lacks.
+const LIBRARY_HAS_NO_EPISODES: ProcessableSeason[] = [
+  {
+    seasonNumber: 1,
+    episodes: 0,
+    episodes4k: 0,
+    totalEpisodes: 10,
+  },
+];
+
+async function seedInFlightShow(tmdbId: number): Promise<MediaRequest> {
+  const mediaRepository = getRepository(Media);
+  const requestRepository = getRepository(MediaRequest);
+  const userRepository = getRepository(User);
+
+  const requestedBy = await userRepository.findOneOrFail({ where: { id: 1 } });
+
+  const media = await mediaRepository.save(
+    new Media({
+      tmdbId,
+      mediaType: MediaType.TV,
+      status: MediaStatus.PROCESSING,
+      status4k: MediaStatus.UNKNOWN,
+      seasons: [
+        new Season({
+          seasonNumber: 1,
+          status: MediaStatus.PROCESSING,
+          status4k: MediaStatus.UNKNOWN,
+        }),
+      ],
+    })
+  );
+
+  // sendToSonarr runs on insert and only bails when no server is configured,
+  // so leftover settings from another test would reach TMDB and fail the request.
+  const settings = getSettings();
+  settings.radarr = [];
+  settings.sonarr = [];
+
+  return requestRepository.save(
+    new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      requestedBy,
+      is4k: false,
+      seasons: [
+        new SeasonRequest({
+          seasonNumber: 1,
+          status: MediaRequestStatus.APPROVED,
+        }),
+      ],
+    })
+  );
+}
+
+async function seedInFlightMovie(tmdbId: number): Promise<MediaRequest> {
+  const mediaRepository = getRepository(Media);
+  const requestRepository = getRepository(MediaRequest);
+  const userRepository = getRepository(User);
+
+  const requestedBy = await userRepository.findOneOrFail({ where: { id: 1 } });
+
+  const media = await mediaRepository.save(
+    new Media({
+      tmdbId,
+      mediaType: MediaType.MOVIE,
+      status: MediaStatus.PROCESSING,
+      status4k: MediaStatus.UNKNOWN,
+    })
+  );
+
+  // sendToRadarr runs on insert and only bails when no server is configured,
+  // so leftover settings from another test would reach TMDB and fail the request.
+  const settings = getSettings();
+  settings.radarr = [];
+  settings.sonarr = [];
+
+  return requestRepository.save(
+    new MediaRequest({
+      type: MediaType.MOVIE,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      requestedBy,
+      is4k: false,
+    })
+  );
+}
+
+describe('BaseScanner', () => {
+  describe('declineRequestsOnStatusReset gate', () => {
+    it('leaves the request alone for a scanner that has not opted in', async () => {
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightShow(7001);
+
+      await new HarnessScanner().scanShow(7001, LIBRARY_HAS_NO_EPISODES);
+
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(updated.status, MediaRequestStatus.APPROVED);
+    });
+
+    it('declines the request for a scanner that has opted in', async () => {
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightShow(7002);
+
+      await new HarnessScanner(true).scanShow(7002, LIBRARY_HAS_NO_EPISODES);
+
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(updated.status, MediaRequestStatus.DECLINED);
+    });
+
+    it('resets a movie in the loop for a scanner that has not opted in', async () => {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightMovie(7003);
+
+      await new HarnessScanner().scanAbandonedMovie(7003);
+
+      const media = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7003 },
+      });
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(media.status, MediaStatus.UNKNOWN);
+      assert.strictEqual(updated.status, MediaRequestStatus.APPROVED);
+    });
+
+    it('defers a movie reset to the resolve pass for a scanner that has opted in', async () => {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightMovie(7004);
+      const scanner = new HarnessScanner(true);
+
+      await scanner.scanAbandonedMovie(7004);
+
+      const duringScan = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7004 },
+      });
+      assert.strictEqual(duringScan.status, MediaStatus.PROCESSING);
+
+      await scanner.resolve();
+
+      const afterResolve = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7004 },
+      });
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(afterResolve.status, MediaStatus.UNKNOWN);
+      assert.strictEqual(updated.status, MediaRequestStatus.DECLINED);
+    });
   });
 });
