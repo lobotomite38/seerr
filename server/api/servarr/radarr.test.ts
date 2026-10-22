@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import type { AxiosInstance } from 'axios';
-import RadarrAPI, { type RadarrMovie } from './radarr';
+import RadarrAPI, { type RadarrMovie, type RadarrMovieOptions } from './radarr';
 
 const buildMovie = (overrides: Partial<RadarrMovie> = {}): RadarrMovie => ({
   id: 236,
@@ -357,6 +357,43 @@ describe('RadarrAPI.addMovie', () => {
     );
     assert.strictEqual(post.mock.callCount(), 1);
   });
+
+  it('does not search a recovered movie that is not yet available', async () => {
+    const api = buildRadarr();
+    useImmediateRecovery(api);
+    const axios = getAxios(api);
+    mock.method(axios, 'get', async (url: string) => ({
+      data:
+        url === '/movie/lookup'
+          ? [buildMovie({ id: 0, monitored: false })]
+          : [buildMovie({ hasFile: false, isAvailable: false })],
+    }));
+    const post = mock.method(axios, 'post', async (url: string) => {
+      if (url === '/movie') {
+        throw new Error('timeout of 10000ms exceeded');
+      }
+      return { data: { id: 995, name: 'MoviesSearch' } };
+    });
+    const search = mock.method(api, 'searchMovie', async () => {});
+
+    await assert.doesNotReject(() =>
+      api.addMovie({
+        title: 'The Castle',
+        tmdbId: 24021,
+        qualityProfileId: 12,
+        profileId: 12,
+        year: 1997,
+        minimumAvailability: 'released',
+        rootFolderPath: '/movies',
+        tags: [],
+        monitored: true,
+        searchNow: true,
+      })
+    );
+
+    assert.strictEqual(post.mock.callCount(), 1);
+    assert.strictEqual(search.mock.callCount(), 0);
+  });
 });
 
 describe('RadarrAPI.removeMovie', () => {
@@ -458,5 +495,161 @@ describe('RadarrAPI.getMovieByTmdbId', () => {
     await assert.rejects(() => radarr.getMovieByTmdbId(550), {
       message: 'Movie not found',
     });
+  });
+});
+
+describe('RadarrAPI addMovie', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('does not trigger a search for an existing, monitored movie that is not yet available', async () => {
+    const radarr = buildRadarr();
+    const options: RadarrMovieOptions = {
+      title: 'Test Movie',
+      qualityProfileId: 1,
+      minimumAvailability: 'Released',
+      tags: [],
+      profileId: 1,
+      year: 2026,
+      rootFolderPath: '/movies',
+      tmdbId: 7,
+      searchNow: true,
+    };
+    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
+      id: 7,
+      title: 'Test Movie',
+      monitored: true,
+      hasFile: false,
+      isAvailable: false,
+    }));
+    mock.method(radarr, 'getMovie', async () =>
+      buildMovie({ id: 7, hasFile: false, monitored: true, isAvailable: false })
+    );
+
+    const search = mock.method(
+      RadarrAPI.prototype,
+      'searchMovie',
+      async () => {}
+    );
+    await radarr.addMovie(options);
+
+    assert.strictEqual(search.mock.callCount(), 0);
+  });
+
+  it('triggers a search for an existing, monitored movie that is already available', async () => {
+    const radarr = buildRadarr();
+    const options: RadarrMovieOptions = {
+      title: 'Test Movie',
+      qualityProfileId: 1,
+      minimumAvailability: 'Released',
+      tags: [],
+      profileId: 1,
+      year: 2026,
+      rootFolderPath: '/movies',
+      tmdbId: 7,
+      searchNow: true,
+    };
+    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
+      id: 7,
+      title: 'Test Movie',
+      monitored: true,
+      hasFile: false,
+      isAvailable: true,
+    }));
+    mock.method(radarr, 'getMovie', async () =>
+      buildMovie({ id: 7, hasFile: false, monitored: true, isAvailable: true })
+    );
+
+    const search = mock.method(
+      RadarrAPI.prototype,
+      'searchMovie',
+      async () => {}
+    );
+    await radarr.addMovie(options);
+
+    assert.strictEqual(search.mock.callCount(), 1);
+  });
+
+  it('does not trigger a search for an existing, previously unmonitored movie that is not yet available', async () => {
+    const radarr = buildRadarr();
+    const options: RadarrMovieOptions = {
+      title: 'Test Movie',
+      qualityProfileId: 1,
+      minimumAvailability: 'Released',
+      tags: [],
+      profileId: 1,
+      year: 2026,
+      rootFolderPath: '/movies',
+      tmdbId: 7,
+      monitored: true,
+      searchNow: true,
+    };
+    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
+      id: 7,
+      title: 'Test Movie',
+      monitored: false,
+      hasFile: false,
+      tags: [],
+    }));
+    mock.method(radarr, 'getMovie', async () =>
+      buildMovie({
+        id: 7,
+        hasFile: false,
+        monitored: false,
+        isAvailable: false,
+      })
+    );
+    const put = mock.method(getAxios(radarr), 'put', async () => ({
+      data: { id: 7, title: 'Test Movie', monitored: true, isAvailable: false },
+    }));
+
+    const search = mock.method(
+      RadarrAPI.prototype,
+      'searchMovie',
+      async () => {}
+    );
+    await radarr.addMovie(options);
+
+    assert.strictEqual(put.mock.callCount(), 1);
+    assert.strictEqual(search.mock.callCount(), 0);
+  });
+
+  it('triggers a search for an existing, previously unmonitored movie that is already available', async () => {
+    const radarr = buildRadarr();
+    const options: RadarrMovieOptions = {
+      title: 'Test Movie',
+      qualityProfileId: 1,
+      minimumAvailability: 'Released',
+      tags: [],
+      profileId: 1,
+      year: 2026,
+      rootFolderPath: '/movies',
+      tmdbId: 7,
+      monitored: true,
+      searchNow: true,
+    };
+    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
+      id: 7,
+      title: 'Test Movie',
+      monitored: false,
+      hasFile: false,
+      tags: [],
+    }));
+    mock.method(radarr, 'getMovie', async () =>
+      buildMovie({ id: 7, hasFile: false, monitored: false, isAvailable: true })
+    );
+    const put = mock.method(getAxios(radarr), 'put', async () => ({
+      data: { id: 7, title: 'Test Movie', monitored: true, isAvailable: true },
+    }));
+
+    const search = mock.method(
+      RadarrAPI.prototype,
+      'searchMovie',
+      async () => {}
+    );
+    await radarr.addMovie(options);
+
+    assert.strictEqual(put.mock.callCount(), 1);
+    assert.strictEqual(search.mock.callCount(), 1);
+    assert.strictEqual(search.mock.calls[0].arguments[0], 7);
   });
 });
