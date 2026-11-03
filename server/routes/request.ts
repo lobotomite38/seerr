@@ -494,7 +494,7 @@ requestRoutes.put<{ requestId: string }>(
 
         if (
           (request.requestedBy.id !== req.user?.id ||
-            (req.body.mediaType !== 'tv' &&
+            (request.type !== MediaType.TV &&
               !req.user?.hasPermission(Permission.REQUEST_ADVANCED))) &&
           !req.user?.hasPermission(Permission.MANAGE_REQUESTS)
         ) {
@@ -537,7 +537,7 @@ requestRoutes.put<{ requestId: string }>(
         const ownerChanging = requestUser.id !== previousOwnerId;
 
         return requestLock.dispatch(userKey(requestUser.id), async () => {
-          if (req.body.mediaType === MediaType.MOVIE) {
+          if (request.type === MediaType.MOVIE) {
             if (ownerChanging && !request.ignoreQuota) {
               const quotas = await requestUser.getQuota();
 
@@ -556,21 +556,30 @@ requestRoutes.put<{ requestId: string }>(
             request.requestedBy = requestUser as User;
 
             await requestRepository.save(request);
-          } else if (req.body.mediaType === MediaType.TV) {
+          } else if (request.type === MediaType.TV) {
             const mediaRepository = getRepository(Media);
-            request.serverId = req.body.serverId;
-            request.profileId = req.body.profileId;
-            request.rootFolder = req.body.rootFolder;
-            request.languageProfileId = req.body.languageProfileId;
-            request.tags = req.body.tags;
+            if (
+              req.user?.hasPermission(
+                [Permission.MANAGE_REQUESTS, Permission.REQUEST_ADVANCED],
+                { type: 'or' }
+              )
+            ) {
+              request.serverId = req.body.serverId;
+              request.profileId = req.body.profileId;
+              request.rootFolder = req.body.rootFolder;
+              request.languageProfileId = req.body.languageProfileId;
+              request.tags = req.body.tags;
+            }
             request.requestedBy = requestUser as User;
 
             const requestedSeasons = req.body.seasons as number[] | undefined;
 
             if (!requestedSeasons || requestedSeasons.length === 0) {
-              throw new Error(
-                'Missing seasons. If you want to cancel a series request, use the DELETE method.'
-              );
+              return next({
+                status: 400,
+                message:
+                  'Missing seasons. If you want to cancel a series request, use the DELETE method.',
+              });
             }
 
             // Same key as create, so an edit cannot claim a season that a new
